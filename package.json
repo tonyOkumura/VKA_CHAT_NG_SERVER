@@ -1,0 +1,37 @@
+{
+  "name": "vka_chat_ng_server",
+  "version": "1.0.0",
+  "description": "��#\u0000 \u0000V\u0000K\u0000A\u0000_\u0000C\u0000H\u0000A\u0000T\u0000_\u0000N\u0000G\u0000_\u0000S\u0000E\u0000R\u0000V\u0000E\u0000R\u0000\r\u0000 \u0000",
+  "main": "index.js",
+  "scripts": {
+    "dev": "ts-node-dev src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonyOkumura/VKA_CHAT_NG_SERVER.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tonyOkumura/VKA_CHAT_NG_SERVER/issues"
+  },
+  "homepage": "https://github.com/tonyOkumura/VKA_CHAT_NG_SERVER#readme",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "nodemon": "^3.1.9",
+    "pg": "^8.14.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.13.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.8.2"
+  }
+}
