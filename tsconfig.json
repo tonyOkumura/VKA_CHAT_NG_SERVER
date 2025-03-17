@@ -5,7 +5,8 @@
         "rootDir": "./src",            // Корневая директория TypeScript-файлов
         "outDir": "./dist",            // Директория для скомпилированного JavaScript
         "strict": true,               // Включение строгих проверок типов
-        "esModuleInterop": true        // Поддержка импорта CommonJS модулей
+        "esModuleInterop": true,        // Поддержка импорта CommonJS модулей
+        "typeRoots": ["./src/types", "./node_modules/@types"] // Путь к папке с объявлениями типов
     },
     "include": [
         "./src/**/*.ts"               // Включаем все .ts файлы из папки src

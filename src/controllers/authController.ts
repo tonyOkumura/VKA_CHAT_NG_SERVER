@@ -4,7 +4,8 @@ import jwt from 'jsonwebtoken';
 import pool from '../models/db';
 
 const SALT_ROUNDS = 10;
-const JWT_SECRET = process.env.JWT_SECRET || 'worisecretkey';
+const JWT_SECRET =  'worisecretkey';
+//const JWT_SECRET = process.env.JWT_TOKEN || 'worisecretkey';
 
 export const register = async (req: Request, res: Response) => {
     // 1. get username, email, password
@@ -23,7 +24,7 @@ export const register = async (req: Request, res: Response) => {
         console.log('User inserted into database:', user);
 
         // 3. return message, user
-        res.status(201).json({ message: 'User registered successfully', user });
+        res.status(201).json({ message: 'User registered successfully', user:user });
     } catch (error) {
         console.error('Error during registration:', error);
         res.status(500).json({ error: 'Failed to register user' });
@@ -56,7 +57,7 @@ export const login = async (req: Request, res: Response): Promise<any> => {
         // 4. return token
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '10h' });
         console.log('Token generated:', token);
-        res.json({ message: 'User logged in successfully', token });
+        res.json({ message: 'User logged in successfully', token : token });
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).json({ error: 'Internal server error' });

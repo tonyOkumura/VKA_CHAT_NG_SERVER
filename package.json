@@ -20,11 +20,13 @@
   },
   "homepage": "https://github.com/tonyOkumura/VKA_CHAT_NG_SERVER#readme",
   "dependencies": {
+    "@types/socket.io": "^3.0.1",
     "bcrypt": "^5.1.1",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "nodemon": "^3.1.9",
-    "pg": "^8.14.0"
+    "pg": "^8.14.0",
+    "socket.io": "^4.8.1"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
