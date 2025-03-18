@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
+import jwt, { JwtPayload } from 'jsonwebtoken';
 
 export const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
     const token = req.headers.authorization?.split(' ')[1];
@@ -13,7 +13,7 @@ export const verifyToken = (req: Request, res: Response, next: NextFunction): vo
     try {
         const decoded = jwt.verify(token,  'worisecretkey');
         // const decoded = jwt.verify(token, process.env.JWT_TOKEN || 'worisecretkey');
-        
+        req.user = decoded as { id: string };
         
         next();
     } catch (e) {

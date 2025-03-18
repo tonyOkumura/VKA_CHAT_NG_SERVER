@@ -3,9 +3,9 @@ import { Request, Response } from "express";
 
 export const fetchAllConversationsByUserId = async (req: Request, res: Response) => {
     let userId = null;
-    // if (req.user) {
-    //     userId = req.user.id;
-    // }
+    if (req.user) {
+        userId = req.user.id;
+    }
 
     try {
         const result = await pool.query(

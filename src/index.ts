@@ -7,6 +7,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { saveMessage } from './controllers/messagesController'; // Import saveMessage
 import { setSourceMapsEnabled } from 'process';
+import contactsRoutes from './routes/contactsRoutes';
 
 const app = express();
 const server = http.createServer(app);
@@ -20,6 +21,8 @@ const io = new Server(server, {
 app.use('/auth', authRoutes);
 app.use('/conversations', conversationsRoutes);
 app.use('/messages', messagesRoutes);
+app.use('/contacts', contactsRoutes);
+
 
 app.get('/', (req: Request, res: Response) => {
     console.log("test");
