@@ -7,6 +7,8 @@ export const fetchContacts = async (req: Request, res: Response): Promise<any> =
         userId = req.user.id;
     }
 
+    console.log(`Fetching contacts for user: ${userId}`);
+
     try {
         const result = await pool.query(
             `
@@ -19,6 +21,7 @@ export const fetchContacts = async (req: Request, res: Response): Promise<any> =
             [userId]
         );
 
+        console.log(`Contacts fetched successfully for user: ${userId}`);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching contacts:', error);
@@ -34,6 +37,8 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
 
     const { contactEmail } = req.body;
 
+    console.log(`Adding contact for user: ${userId} with email: ${contactEmail}`);
+
     try {
         const contactExists = await pool.query(
             `SELECT id FROM users WHERE email = $1`,
@@ -41,6 +46,7 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
         );
 
         if (contactExists.rowCount === 0) {
+            console.log('Contact not found');
             return res.status(404).json({ error: 'Contact not found' });
         }
 
@@ -55,6 +61,7 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
             [userId, contactId]
         );
 
+        console.log(`Contact added successfully for user: ${userId}`);
         res.status(201).json({ message: 'Contact added successfully' });
     } catch (error) {
         console.error('Error adding contact:', error);

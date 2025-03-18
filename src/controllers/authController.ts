@@ -4,16 +4,14 @@ import jwt from 'jsonwebtoken';
 import pool from '../models/db';
 
 const SALT_ROUNDS = 10;
-const JWT_SECRET =  'worisecretkey';
+const JWT_SECRET = 'worisecretkey';
 //const JWT_SECRET = process.env.JWT_TOKEN || 'worisecretkey';
 
 export const register = async (req: Request, res: Response) => {
-    // 1. get username, email, password
     const { username, email, password } = req.body;
     console.log('Register request received:', { username, email, password });
 
     try {
-        // 2. Insert those data into our db
         const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
         console.log('Password hashed successfully');
         const result = await pool.query(
@@ -23,8 +21,7 @@ export const register = async (req: Request, res: Response) => {
         const user = result.rows[0];
         console.log('User inserted into database:', user);
 
-        // 3. return message, user
-        res.status(201).json({ message: 'User registered successfully', user:user });
+        res.status(201).json({ message: 'User registered successfully', user: user });
     } catch (error) {
         console.error('Error during registration:', error);
         res.status(500).json({ error: 'Failed to register user' });
@@ -32,12 +29,10 @@ export const register = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response): Promise<any> => {
-    // 1. get email, password
     const { email, password } = req.body;
     console.log('Login request received:', { email, password });
 
     try {
-        // 2. Verify if email exist
         const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
         const user = result.rows[0];
         console.log('User fetched from database:', user);
@@ -47,17 +42,15 @@ export const login = async (req: Request, res: Response): Promise<any> => {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // 3. Compare pwd -> 'invalid credentials'
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             console.log('Invalid credentials');
             return res.status(400).json({ error: 'Invalid credentials' });
         }
 
-        // 4. return token
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '10h' });
         console.log('Token generated:', token);
-        res.json({ message: 'User logged in successfully', token : token });
+        res.json({ message: 'User logged in successfully', token: token });
     } catch (error) {
         console.error('Error during login:', error);
         res.status(500).json({ error: 'Internal server error' });
