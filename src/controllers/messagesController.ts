@@ -18,7 +18,7 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
         );
 
         console.log(`Messages fetched successfully for conversation: ${conversationId}`);
-        res.json(result.rows);
+        res.json(result.rows.reverse());
     } catch (err) {
         console.error(`Failed to fetch messages for conversation ${conversationId} - ${(err as Error).message}`);
         res.status(500).json({ error: 'Failed to fetch messages' });
