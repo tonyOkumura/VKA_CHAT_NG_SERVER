@@ -35,14 +35,14 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
         userId = req.user.id;
     }
 
-    const { contactEmail } = req.body;
+    const { contact_email } = req.body;
 
-    console.log(`Adding contact for user: ${userId} with email: ${contactEmail}`);
+    console.log(`Adding contact for user: ${userId} with email: ${contact_email}`);
 
     try {
         const contactExists = await pool.query(
             `SELECT id FROM users WHERE email = $1`,
-            [contactEmail]
+            [contact_email]
         );
 
         if (contactExists.rowCount === 0) {
@@ -66,5 +66,34 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
     } catch (error) {
         console.error('Error adding contact:', error);
         res.status(500).json({ error: 'Failed to add contact' });
+    }
+};
+
+export const deleteContact = async (req: Request, res: Response): Promise<any> => {
+    let userId = null;
+    if (req.user) {
+        userId = req.user.id;
+    }
+
+    const { contactId } = req.body;
+
+    console.log(`Deleting contact for user: ${userId} with contactId: ${contactId}`);
+
+    try {
+        const result = await pool.query(
+            `DELETE FROM contacts WHERE user_id = $1 AND contact_id = $2 RETURNING *`,
+            [userId, contactId]
+        );
+
+        if (result.rowCount === 0) {
+            console.log('Contact not found');
+            return res.status(404).json({ error: 'Contact not found' });
+        }
+
+        console.log(`Contact deleted successfully for user: ${userId}`);
+        res.status(200).json({ message: 'Contact deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting contact:', error);
+        res.status(500).json({ error: 'Failed to delete contact' });
     }
 };
