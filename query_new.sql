@@ -198,6 +198,29 @@ AFTER INSERT ON conversation_participants
 FOR EACH ROW
 EXECUTE FUNCTION create_group_add_notification();
 
+CREATE OR REPLACE FUNCTION add_reverse_contact()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Проверяем, существует ли уже обратная запись (чтобы избежать дубликатов)
+    IF NOT EXISTS (
+        SELECT 1 FROM contacts 
+        WHERE user_id = NEW.contact_id 
+          AND contact_id = NEW.user_id
+    ) THEN
+        -- Создаём обратную запись
+        INSERT INTO contacts (user_id, contact_id, created_at)
+        VALUES (NEW.contact_id, NEW.user_id, CURRENT_TIMESTAMP);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Создаём триггер, который срабатывает после вставки новой записи в `contacts`
+CREATE TRIGGER add_reverse_contact_trigger
+AFTER INSERT ON contacts
+FOR EACH ROW
+EXECUTE FUNCTION add_reverse_contact();
+
 -- Индексы: ускоряют поиск данных в таблицах.
 -- Это как оглавление в книге — помогает быстрее найти нужную информацию.
 CREATE INDEX idx_conversation_participants_conversation_id ON conversation_participants(conversation_id); -- Для быстрого поиска участников по чату.
