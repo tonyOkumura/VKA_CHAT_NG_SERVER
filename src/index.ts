@@ -36,7 +36,7 @@ io.on('connection', (socket) => {
         socket.join(conversationId);
         console.log('User joined conversation: ' + conversationId);
     });
-
+    
     socket.on('sendMessage', async (message) => {
         const { conversationId, senderId, content } = message;
 
