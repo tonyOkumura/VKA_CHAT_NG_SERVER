@@ -28,7 +28,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./query_new.sql:/docker-entrypoint-initdb.d/query_new.sql
     networks:
       - vka-chat-network
 
