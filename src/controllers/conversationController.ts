@@ -1,3 +1,4 @@
+import { json } from "stream/consumers";
 import pool from "../models/db";
 import { Request, Response } from "express";
 
@@ -177,5 +178,28 @@ export const fetchAllParticipantsByConversationId = async (req: Request, res: Re
     } catch (error) {
         console.error('Error fetching participants:', error);
         res.status(500).json({ error: 'Failed to fetch participants' });
+    }
+};
+
+export const fetchAllParticipantsByConversationIdForMessages = async (conversation_id: string) => {
+    console.log(`Получение участников для разговора: ${conversation_id}`);
+
+    try {
+        const result = await pool.query(
+            `
+            SELECT u.id AS user_id, u.username, u.email
+            FROM conversation_participants cp
+            JOIN users u ON u.id = cp.user_id
+            WHERE cp.conversation_id = $1
+            ORDER BY u.username ASC
+            `,
+            [conversation_id]
+        );
+
+        console.log(`Участники успешно получены для разговора: ${conversation_id}`);
+        return result.rows;
+    } catch (error) {
+        console.error('Ошибка при получении участников:', error);
+        throw error; // Передаем ошибку дальше для обработки в вызывающем коде
     }
 };
