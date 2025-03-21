@@ -18,7 +18,8 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                 c.is_group_chat,
                 u.username AS admin_name,
                 m.content AS last_message, 
-                m.created_at AS last_message_time
+                m.created_at AS last_message_time,
+                cp.unread_count
             FROM conversations c
             JOIN users u ON u.id = c.admin_id
             LEFT JOIN LATERAL (

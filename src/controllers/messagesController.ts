@@ -2,9 +2,9 @@ import { Request, Response } from 'express';
 import pool from '../models/db';
 
 export const fetchAllMessagesByConversationId = async (req: Request, res: Response): Promise<void> => {
-    const { conversationId } = req.params;
+    const { conversation_id } = req.params;
 
-    console.log(`Fetching messages for conversation: ${conversationId}`);
+    console.log(`Fetching messages for conversation: ${conversation_id}`);
 
     try {
         const result = await pool.query(
@@ -14,13 +14,13 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
             WHERE m.conversation_id = $1
             ORDER BY m.created_at ASC
             `,
-            [conversationId]
+            [conversation_id]
         );
 
-        console.log(`Messages fetched successfully for conversation: ${conversationId}`);
+        console.log(`Messages fetched successfully for conversation: ${conversation_id}`);
         res.json(result.rows.reverse());
     } catch (err) {
-        console.error(`Failed to fetch messages for conversation ${conversationId} - ${(err as Error).message}`);
+        console.error(`Failed to fetch messages for conversation ${conversation_id} - ${(err as Error).message}`);
         res.status(500).json({ error: 'Failed to fetch messages' });
     }
 };
