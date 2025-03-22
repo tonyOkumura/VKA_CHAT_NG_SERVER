@@ -9,13 +9,13 @@ services:
     ports:
       - "6000:6000"
     environment:
-      - HOST=0.0.0.0  # Теперь сервер слушает все сети
+      - HOST=0.0.0.0  
       - PORT=6000
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:241111@db:5432/vka_chat  # Подключение к БД внутри Docker
+      - DATABASE_URL=postgresql://postgres:241111@db:5432/vka_chat  
     depends_on:
       - db
-    restart: always  # Автостарт при сбое
+    restart: always  
     networks:
       - vka-chat-network
 
@@ -32,7 +32,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./query_new.sql:/docker-entrypoint-initdb.d/query_new.sql
-    restart: always  # Автостарт при сбое
+    restart: always  
     networks:
       - vka-chat-network
 
@@ -47,7 +47,7 @@ services:
       - "5050:5050"
     depends_on:
       - db
-    restart: always  # Автостарт при сбое
+    restart: always  
     networks:
       - vka-chat-network
 
