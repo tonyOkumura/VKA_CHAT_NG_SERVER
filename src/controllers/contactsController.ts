@@ -50,7 +50,7 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
             return res.status(404).json({ error: 'Contact not found' });
         }
 
-        const contactId = contactExists.rows[0].id;
+        const contact_id = contactExists.rows[0].id;
 
         await pool.query(
             `
@@ -58,7 +58,7 @@ export const addContact = async (req: Request, res: Response): Promise<any> => {
             VALUES ($1, $2)
             ON CONFLICT DO NOTHING;
             `,
-            [userId, contactId]
+            [userId, contact_id]
         );
 
         console.log(`Contact added successfully for user: ${userId}`);
@@ -75,14 +75,14 @@ export const deleteContact = async (req: Request, res: Response): Promise<any> =
         userId = req.user.id;
     }
 
-    const { contactId } = req.body;
+    const { contact_id } = req.body;
 
-    console.log(`Deleting contact for user: ${userId} with contactId: ${contactId}`);
+    console.log(`Deleting contact for user: ${userId} with contactId: ${contact_id}`);
 
     try {
         const result = await pool.query(
             `DELETE FROM contacts WHERE user_id = $1 AND contact_id = $2 RETURNING *`,
-            [userId, contactId]
+            [userId, contact_id]
         );
 
         if (result.rowCount === 0) {

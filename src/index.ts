@@ -47,7 +47,7 @@ io.on('connection', (socket) => {
             console.log(savedMessage);
 
             // Отправляем сообщение всем участникам разговора
-            io.to(conversation_id).emit('newMessage', savedMessage);
+            io.to(conversation_id).emit('newMessage', savedMessage );
 
             // Получаем всех участников разговора с помощью новой функции
             const participants = await fetchAllParticipantsByConversationIdForMessages(conversation_id);

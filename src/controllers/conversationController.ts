@@ -13,15 +13,32 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
     try {
         const result = await pool.query(
             `
+            WITH dialog_names AS (
+                SELECT 
+                    c.id AS conversation_id,
+                    CASE 
+                        WHEN c.name = 'dialog' THEN (
+                            SELECT u.username
+                            FROM conversation_participants cp2
+                            JOIN users u ON u.id = cp2.user_id
+                            WHERE cp2.conversation_id = c.id
+                            AND cp2.user_id != $1
+                            LIMIT 1
+                        )
+                        ELSE c.name
+                    END AS conversation_name
+                FROM conversations c
+            )
             SELECT 
                 c.id AS conversation_id, 
-                c.name AS conversation_name,
+                dn.conversation_name,
                 c.is_group_chat,
                 u.username AS admin_name,
                 m.content AS last_message, 
                 m.created_at AS last_message_time,
                 cp.unread_count
             FROM conversations c
+            JOIN dialog_names dn ON dn.conversation_id = c.id
             JOIN users u ON u.id = c.admin_id
             LEFT JOIN LATERAL (
                 SELECT content, created_at
@@ -83,7 +100,7 @@ export const checkOrCreateConversation = async (req: Request, res: Response): Pr
         }
 
         if (existingConversation.rowCount !== null && existingConversation.rowCount > 0) {
-            return res.json({ conversationId: existingConversation.rows[0].id });
+            return res.json({ conversation_id: existingConversation.rows[0].id });
         }
 
         const newConversation = await pool.query(
@@ -95,17 +112,17 @@ export const checkOrCreateConversation = async (req: Request, res: Response): Pr
             [name, is_group_chat, userId]
         );
 
-        const conversationId = newConversation.rows[0].id;
+        const conversation_id = newConversation.rows[0].id;
 
         await pool.query(
             `
             INSERT INTO conversation_participants (conversation_id, user_id)
             VALUES ($1, $2), ($1, $3);
             `,
-            [conversationId, userId, contact_id]
+            [conversation_id, userId, contact_id]
         );
 
-        res.json({ conversationId });
+        res.json({ conversation_id });
     } catch (error) {
         console.error('Error checking or creating conversation:', error);
         res.status(500).json({ error: 'Failed to check or create conversation' });

@@ -20,7 +20,8 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
             SELECT 
                 m.id, 
                 m.content, 
-                m.sender_id, 
+                m.sender_id,
+                u.username AS sender_username,
                 m.conversation_id, 
                 m.created_at,
                 -- Проверяем, прочитано ли сообщение кем-то, кроме отправителя
@@ -51,6 +52,7 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                     '[]'::json
                 ) AS read_by_users
             FROM messages m
+            JOIN users u ON u.id = m.sender_id
             WHERE m.conversation_id = $1
             ORDER BY m.created_at ASC
             `,
