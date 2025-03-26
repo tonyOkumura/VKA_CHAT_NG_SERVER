@@ -37,6 +37,7 @@ CREATE TABLE messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор сообщения.
     conversation_id UUID REFERENCES conversations(id), -- В каком чате это сообщение (ссылка на таблицу conversations).
     sender_id UUID REFERENCES users(id), -- Кто отправил сообщение (ссылка на таблицу users).
+    sender_username VARCHAR(50), -- Имя отправителя на момент отправки сообщения
     content TEXT, -- Текст сообщения (может быть любой длины, например, "Привет, как дела?").
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время отправки сообщения (московское время).
 );
@@ -231,3 +232,22 @@ CREATE INDEX idx_message_reads_message_id ON message_reads(message_id); -- Дл�
 CREATE INDEX idx_message_reads_user_id ON message_reads(user_id); -- Для быстрого поиска сообщений, прочитанных пользователем.
 CREATE INDEX idx_message_mentions_message_id ON message_mentions(message_id); -- Для быстрого поиска упоминаний в сообщении.
 CREATE INDEX idx_notifications_user_id ON notifications(user_id); -- Для быстрого поиска уведомлений пользователя.
+
+-- Функция для автоматического заполнения sender_username при создании сообщения
+CREATE OR REPLACE FUNCTION set_sender_username()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Получаем username отправителя из таблицы users
+    SELECT username INTO NEW.sender_username
+    FROM users
+    WHERE id = NEW.sender_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Создаём триггер, который срабатывает перед вставкой нового сообщения
+CREATE TRIGGER set_sender_username_trigger
+BEFORE INSERT ON messages
+FOR EACH ROW
+EXECUTE FUNCTION set_sender_username();

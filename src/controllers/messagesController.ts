@@ -21,6 +21,7 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                 m.id, 
                 m.content, 
                 m.sender_id,
+                m.sender_username,
                 u.username AS sender_username,
                 m.conversation_id, 
                 m.created_at,
@@ -100,7 +101,7 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
         // Сохраняем сообщение
         const messageResult = await pool.query(
             `
-            INSERT INTO messages (conversation_id, sender_id, content)
+            INSERT INTO messages (conversation_id, sender_id,content)
             VALUES ($1, $2, $3)
             RETURNING *
             `,
