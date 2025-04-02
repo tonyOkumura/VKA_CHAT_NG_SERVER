@@ -8,7 +8,7 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
         userId = req.user.id;
     }
 
-    console.log(`Fetching conversations for user: ${userId}`);
+    console.log(`Получение чатов для пользователя: ${userId}`);
 
     try {
         const result = await pool.query(
@@ -28,92 +28,126 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                         ELSE c.name
                     END AS conversation_name
                 FROM conversations c
+            ),
+            last_messages AS (
+                SELECT 
+                    conversation_id,
+                    content,
+                    created_at,
+                    sender_id,
+                    sender_username
+                FROM messages
+                WHERE (conversation_id, created_at) IN (
+                    SELECT conversation_id, MAX(created_at)
+                    FROM messages
+                    GROUP BY conversation_id
+                )
+            ),
+            participants_info AS (
+                SELECT 
+                    cp.conversation_id,
+                    json_agg(
+                        json_build_object(
+                            'user_id', u.id,
+                            'username', u.username,
+                            'email', u.email,
+                            'is_online', u.is_online
+                        )
+                    ) AS participants
+                FROM conversation_participants cp
+                JOIN users u ON u.id = cp.user_id
+                GROUP BY cp.conversation_id
+            ),
+            unread_counts AS (
+                SELECT 
+                    conversation_id,
+                    COUNT(*) FILTER (WHERE NOT EXISTS (
+                        SELECT 1 FROM message_reads mr 
+                        WHERE mr.message_id = m.id 
+                        AND mr.user_id = $1
+                    )) AS unread_count
+                FROM messages m
+                GROUP BY conversation_id
             )
             SELECT 
-                c.id AS conversation_id, 
+                c.id AS conversation_id,
                 dn.conversation_name,
                 c.is_group_chat,
+                c.name AS group_name,
                 u.username AS admin_name,
-                m.content AS last_message, 
-                m.created_at AS last_message_time,
-                cp.unread_count
+                u.id AS admin_id,
+                lm.content AS last_message,
+                lm.created_at AS last_message_time,
+                lm.sender_id AS last_message_sender_id,
+                lm.sender_username AS last_message_sender_username,
+                COALESCE(uc.unread_count, 0) AS unread_count,
+                pi.participants,
+                c.created_at AS conversation_created_at
             FROM conversations c
             JOIN dialog_names dn ON dn.conversation_id = c.id
             JOIN users u ON u.id = c.admin_id
-            LEFT JOIN LATERAL (
-                SELECT content, created_at
-                FROM messages
-                WHERE conversation_id = c.id
-                ORDER BY created_at DESC
-                LIMIT 1
-            ) m ON true
+            LEFT JOIN last_messages lm ON lm.conversation_id = c.id
+            LEFT JOIN unread_counts uc ON uc.conversation_id = c.id
+            LEFT JOIN participants_info pi ON pi.conversation_id = c.id
             JOIN conversation_participants cp ON cp.conversation_id = c.id
             WHERE cp.user_id = $1
-            ORDER BY m.created_at DESC
+            ORDER BY lm.created_at DESC NULLS LAST
             `,
             [userId]
         );
 
-        console.log(`Conversations fetched successfully for user: ${userId}`);
+        console.log(`Чаты успешно получены для пользователя: ${userId}`);
         res.json(result.rows);
     } catch (e) {
         const error = e as Error;
-        console.error(`Error fetching conversations for user: ${userId} - Error: ${error.message}`);
-        res.status(500).json({ error: 'Internal server error' });
+        console.error(`Ошибка при получении чатов для пользователя: ${userId} - ${error.message}`);
+        res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
 };
 
-export const checkOrCreateConversation = async (req: Request, res: Response): Promise<any> => {
+export const createDialog = async (req: Request, res: Response): Promise<any> => {
     let userId = null;
     if (req.user) {
         userId = req.user.id;
     }
-    const { contact_id, is_group_chat, name } = req.body;
+    const { contact_id } = req.body;
 
     try {
-        let existingConversation;
-        if (is_group_chat) {
-            existingConversation = await pool.query(
-                `
-                SELECT id FROM conversations
-                WHERE name = $1 AND is_group_chat = TRUE
-                LIMIT 1;
-                `,
-                [name]
-            );
-        } else {
-            existingConversation = await pool.query(
-                `
-                SELECT id FROM conversations
-                WHERE id IN (
-                    SELECT conversation_id FROM conversation_participants
-                    WHERE user_id = $1
-                )
-                AND id IN (
-                    SELECT conversation_id FROM conversation_participants
-                    WHERE user_id = $2
-                )
-                LIMIT 1;
-                `,
-                [userId, contact_id]
-            );
-        }
-
-        if (existingConversation.rowCount !== null && existingConversation.rowCount > 0) {
-            return res.json({ conversation_id: existingConversation.rows[0].id });
-        }
-
-        const newConversation = await pool.query(
+        // Проверяем существование диалога
+        const existingDialog = await pool.query(
             `
-            INSERT INTO conversations (name, is_group_chat, admin_id)
-            VALUES ($1, $2, $3)
-            RETURNING id;
+            SELECT id FROM conversations
+            WHERE id IN (
+                SELECT conversation_id FROM conversation_participants
+                WHERE user_id = $1
+            )
+            AND id IN (
+                SELECT conversation_id FROM conversation_participants
+                WHERE user_id = $2
+            )
+            AND is_group_chat = FALSE
+            LIMIT 1;
             `,
-            [name, is_group_chat, userId]
+            [userId, contact_id]
         );
 
-        const conversation_id = newConversation.rows[0].id;
+        if (existingDialog.rowCount !== null && existingDialog.rowCount > 0) {
+            return res.json({ conversation_id: existingDialog.rows[0].id });
+        }
 
+        // Создаем новый диалог
+        const newDialog = await pool.query(
+            `
+            INSERT INTO conversations (name, is_group_chat, admin_id)
+            VALUES ('dialog', FALSE, $1)
+            RETURNING id;
+            `,
+            [userId]
+        );
+
+        const conversation_id = newDialog.rows[0].id;
+
+        // Добавляем участников
         await pool.query(
             `
             INSERT INTO conversation_participants (conversation_id, user_id)
@@ -124,8 +158,60 @@ export const checkOrCreateConversation = async (req: Request, res: Response): Pr
 
         res.json({ conversation_id });
     } catch (error) {
-        console.error('Error checking or creating conversation:', error);
-        res.status(500).json({ error: 'Failed to check or create conversation' });
+        console.error('Ошибка при создании диалога:', error);
+        res.status(500).json({ error: 'Не удалось создать диалог' });
+    }
+};
+
+export const createGroupChat = async (req: Request, res: Response): Promise<any> => {
+    let userId = null;
+    if (req.user) {
+        userId = req.user.id;
+    }
+    const { name, participants } = req.body;
+
+    try {
+        // Проверяем существование группового чата с таким именем
+        const existingChat = await pool.query(
+            `
+            SELECT id FROM conversations
+            WHERE name = $1 AND is_group_chat = TRUE
+            LIMIT 1;
+            `,
+            [name]
+        );
+
+        if (existingChat.rowCount !== null && existingChat.rowCount > 0) {
+            return res.status(409).json({ error: 'Групповой чат с таким именем уже существует' });
+        }
+
+        // Создаем новый групповой чат
+        const newChat = await pool.query(
+            `
+            INSERT INTO conversations (name, is_group_chat, admin_id)
+            VALUES ($1, TRUE, $2)
+            RETURNING id;
+            `,
+            [name, userId]
+        );
+
+        const conversation_id = newChat.rows[0].id;
+
+        // Добавляем создателя и всех участников
+        const allParticipants = [userId, ...participants];
+        const values = allParticipants.map(participantId => `('${conversation_id}', '${participantId}')`).join(',');
+        
+        await pool.query(
+            `
+            INSERT INTO conversation_participants (conversation_id, user_id)
+            VALUES ${values};
+            `
+        );
+
+        res.status(201).json({ conversation_id });
+    } catch (error) {
+        console.error('Ошибка при создании группового чата:', error);
+        res.status(500).json({ error: 'Не удалось создать групповой чат' });
     }
 };
 

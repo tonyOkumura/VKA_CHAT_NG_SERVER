@@ -9,6 +9,7 @@ import { saveMessage } from './controllers/messagesController'; // Import saveMe
 import contactsRoutes from './routes/contactsRoutes';
 import pool from './models/db';
 import { fetchAllParticipantsByConversationId, fetchAllParticipantsByConversationIdForMessages } from './controllers/conversationController';
+import { updateUserOnlineStatus } from './controllers/userController';
 
 const app = express();
 const server = http.createServer(app);
@@ -29,12 +30,96 @@ app.get('/', (req: Request, res: Response) => {
     res.send("yes it works");
 });
 
-io.on('connection', (socket) => {
+// Хранилище для сопоставления socket.id и userId
+const userSockets = new Map<string, string>();
+
+io.on('connection', async (socket) => {
     console.log('Пользователь подключился: ', socket.id);
 
-    socket.on('joinConversation', (conversationId) => {
+    // Обработка аутентификации пользователя
+    socket.on('authenticate', async (userId: string) => {
+        try {
+            // Сохраняем соответствие socket.id и userId
+            userSockets.set(socket.id, userId);
+            
+            // Обновляем статус пользователя на онлайн
+            await updateUserOnlineStatus(userId, true);
+            
+            // Уведомляем всех о том, что пользователь онлайн
+            io.emit('userStatusChanged', { userId, isOnline: true });
+            
+            console.log(`Пользователь ${userId} аутентифицирован и отмечен как онлайн`);
+        } catch (error) {
+            console.error('Ошибка при аутентификации пользователя:', error);
+        }
+    });
+
+    socket.on('joinConversation', async (conversationId) => {
         socket.join(conversationId);
         console.log('Пользователь присоединился к разговору: ' + conversationId);
+
+        try {
+            const userId = userSockets.get(socket.id);
+            if (userId) {
+                // Отмечаем все сообщения в чате как прочитанные
+                await pool.query(
+                    `
+                    INSERT INTO message_reads (message_id, user_id, read_at)
+                    SELECT m.id, $1, NOW()
+                    FROM messages m
+                    WHERE m.conversation_id = $2
+                    AND NOT EXISTS (
+                        SELECT 1 
+                        FROM message_reads mr 
+                        WHERE mr.message_id = m.id 
+                        AND mr.user_id = $1
+                    )
+                    `,
+                    [userId, conversationId]
+                );
+
+                // Получаем всех участников чата
+                const participants = await fetchAllParticipantsByConversationIdForMessages(conversationId);
+                if (participants) {
+                    // Уведомляем всех участников о прочтении сообщений
+                    io.to(conversationId).emit('messagesRead', {
+                        conversation_id: conversationId,
+                        user_id: userId,
+                        read_at: new Date()
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Ошибка при обработке прочтения сообщений:', error);
+        }
+    });
+
+    // Добавляем новый обработчик для прочтения сообщений
+    socket.on('markMessagesAsRead', async ({ conversation_id, message_ids }) => {
+        try {
+            const userId = userSockets.get(socket.id);
+            if (userId) {
+                // Отмечаем указанные сообщения как прочитанные
+                await pool.query(
+                    `
+                    INSERT INTO message_reads (message_id, user_id, read_at)
+                    SELECT unnest($1::uuid[]), $2, NOW()
+                    ON CONFLICT (message_id, user_id) DO NOTHING
+                    `,
+                    [message_ids, userId]
+                );
+
+                // Уведомляем всех участников о прочтении сообщений
+                io.to(conversation_id).emit('messagesRead', {
+                    conversation_id,
+                    user_id: userId,
+                    message_ids,
+                    read_at: new Date()
+                });
+            }
+        } catch (error) {
+            console.error('Ошибка при отметке сообщений как прочитанных:', error);
+        }
     });
     
     socket.on('sendMessage', async (message) => {
@@ -100,8 +185,26 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
         console.log('Пользователь отключился: ', socket.id);
+        
+        try {
+            const userId = userSockets.get(socket.id);
+            if (userId) {
+                // Удаляем соответствие socket.id и userId
+                userSockets.delete(socket.id);
+                
+                // Обновляем статус пользователя на офлайн
+                await updateUserOnlineStatus(userId, false);
+                
+                // Уведомляем всех о том, что пользователь офлайн
+                io.emit('userStatusChanged', { userId, isOnline: false });
+                
+                console.log(`Пользователь ${userId} отмечен как офлайн`);
+            }
+        } catch (error) {
+            console.error('Ошибка при обработке отключения пользователя:', error);
+        }
     });
 });
 const HOST = process.env.HOST || '0.0.0.0';
