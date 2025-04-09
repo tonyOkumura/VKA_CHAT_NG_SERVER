@@ -199,7 +199,11 @@ export const createGroupChat = async (req: Request, res: Response): Promise<any>
 
         // Добавляем создателя и всех участников
         const allParticipants = [userId, ...participants];
-        const values = allParticipants.map(participantId => `('${conversation_id}', '${participantId}')`).join(',');
+        // Удаляем дубликаты из массива участников
+        const uniqueParticipants = Array.from(new Set(allParticipants));
+        
+        // Создаем массив значений для вставки
+        const values = uniqueParticipants.map(participantId => `('${conversation_id}', '${participantId}')`).join(',');
         
         await pool.query(
             `

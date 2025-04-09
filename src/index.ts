@@ -62,21 +62,21 @@ io.on('connection', async (socket) => {
             const userId = userSockets.get(socket.id);
             if (userId) {
                 // Отмечаем все сообщения в чате как прочитанные
-                await pool.query(
-                    `
-                    INSERT INTO message_reads (message_id, user_id, read_at)
-                    SELECT m.id, $1, NOW()
-                    FROM messages m
-                    WHERE m.conversation_id = $2
-                    AND NOT EXISTS (
-                        SELECT 1 
-                        FROM message_reads mr 
-                        WHERE mr.message_id = m.id 
-                        AND mr.user_id = $1
-                    )
-                    `,
-                    [userId, conversationId]
-                );
+                // await pool.query(
+                //     `
+                //     INSERT INTO message_reads (message_id, user_id, read_at)
+                //     SELECT m.id, $1, NOW()
+                //     FROM messages m
+                //     WHERE m.conversation_id = $2
+                //     AND NOT EXISTS (
+                //         SELECT 1 
+                //         FROM message_reads mr 
+                //         WHERE mr.message_id = m.id 
+                //         AND mr.user_id = $1
+                //     )
+                //     `,
+                //     [userId, conversationId]
+                // );
 
                 // Получаем всех участников чата
                 const participants = await fetchAllParticipantsByConversationIdForMessages(conversationId);
