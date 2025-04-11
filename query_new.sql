@@ -5,7 +5,7 @@ SET TIME ZONE 'Europe/Moscow';
 -- Таблица users: здесь хранятся данные о пользователях мессенджера.
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор пользователя (UUID — это длинный случайный код, который никогда не повторяется).
-    username VARCHAR(50) UNIQUE NOT NULL, -- Имя пользователя (до 50 символов), должно быть уникальным (нельзя зарегистрировать два одинаковых имени).
+    username VARCHAR(255) UNIQUE NOT NULL, -- Имя пользователя (до 50 символов), должно быть уникальным (нельзя зарегистрировать два одинаковых имени).
     email VARCHAR(100) UNIQUE NOT NULL, -- Электронная почта пользователя (до 100 символов), тоже должна быть уникальной.
     password VARCHAR(255) NOT NULL, -- Пароль пользователя (до 255 символов), обязателен.
     is_online BOOLEAN DEFAULT FALSE, -- Статус: онлайн (TRUE) или офлайн (FALSE). По умолчанию пользователь офлайн.
@@ -37,7 +37,7 @@ CREATE TABLE messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор сообщения.
     conversation_id UUID REFERENCES conversations(id), -- В каком чате это сообщение (ссылка на таблицу conversations).
     sender_id UUID REFERENCES users(id), -- Кто отправил сообщение (ссылка на таблицу users).
-    sender_username VARCHAR(50), -- Имя отправителя на момент отправки сообщения
+    sender_username VARCHAR(255), -- Имя отправителя на момент отправки сообщения
     content TEXT, -- Текст сообщения (может быть любой длины, например, "Привет, как дела?").
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время отправки сообщения (московское время).
 );
@@ -75,7 +75,7 @@ CREATE TABLE files (
     message_id UUID REFERENCES messages(id) ON DELETE CASCADE, -- К какому сообщению прикреплён файл (если сообщение удаляется, файл тоже удаляется).
     file_name VARCHAR(255) NOT NULL, -- Имя файла (например, "photo.jpg").
     file_path VARCHAR(500) NOT NULL, -- Путь к файлу на сервере или в облаке (например, "/uploads/photo.jpg").
-    file_type VARCHAR(50), -- Тип файла (например, "image", "video", "document").
+    file_type VARCHAR(255), -- Тип файла (например, "image", "video", "document").
     file_size INTEGER, -- Размер файла в байтах (например, 5242880 для 5 МБ).
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время загрузки файла (московское время).
 );
@@ -84,7 +84,7 @@ CREATE TABLE files (
 CREATE TABLE notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор уведомления.
     user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Кому адресовано уведомление (ссылка на таблицу users).
-    type VARCHAR(50) NOT NULL, -- Тип уведомления: 'new_message' (новое сообщение), 'mention' (упоминание), 'group_add' (добавление в чат).
+    type VARCHAR(255) NOT NULL, -- Тип уведомления: 'new_message' (новое сообщение), 'mention' (упоминание), 'group_add' (добавление в чат).
     content TEXT NOT NULL, -- Текст уведомления (например, "Новое сообщение от user123").
     related_conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL, -- Ссылка на чат, связанный с уведомлением (может стать NULL, если чат удалён).
     related_message_id UUID REFERENCES messages(id) ON DELETE SET NULL, -- Ссылка на сообщение, связанное с уведомлением (может стать NULL, если сообщение удалено).

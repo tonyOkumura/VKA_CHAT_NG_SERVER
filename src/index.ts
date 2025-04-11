@@ -3,6 +3,7 @@ import { json } from 'body-parser';
 import authRoutes from './routes/authRoutes';
 import conversationsRoutes from './routes/conversationsRoutes';
 import messagesRoutes from './routes/messagesRoutes';
+import filesRoutes from './routes/filesRoutes';
 import http from 'http';
 import { Server } from 'socket.io';
 import { saveMessage } from './controllers/messagesController'; // Import saveMessage
@@ -10,6 +11,15 @@ import contactsRoutes from './routes/contactsRoutes';
 import pool from './models/db';
 import { fetchAllParticipantsByConversationId, fetchAllParticipantsByConversationIdForMessages } from './controllers/conversationController';
 import { updateUserOnlineStatus } from './controllers/userController';
+import fs from 'fs';
+import path from 'path';
+
+// Создаем папку uploads, если она не существует
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    console.log('Папка uploads создана');
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -24,6 +34,7 @@ app.use('/auth', authRoutes);
 app.use('/conversations', conversationsRoutes);
 app.use('/messages', messagesRoutes);
 app.use('/contacts', contactsRoutes);
+app.use('/files', filesRoutes);
 
 app.get('/', (req: Request, res: Response) => {
     console.log("test");
@@ -123,16 +134,16 @@ io.on('connection', async (socket) => {
     });
     
     socket.on('sendMessage', async (message) => {
-        const { conversation_id, sender_id, content, mentions = [] } = message;
+        const { conversation_id, sender_id, content, mentions = [], file_id } = message;
 
         try {
             // Сохраняем сообщение и получаем его данные
-            const savedMessage = await saveMessage(conversation_id, sender_id, content, mentions);
+            const savedMessage = await saveMessage(conversation_id, sender_id, content, mentions, file_id);
             console.log('Отправка сообщения: ');
             console.log(savedMessage);
 
             // Отправляем сообщение всем участникам разговора
-            io.to(conversation_id).emit('newMessage', savedMessage );
+            io.to(conversation_id).emit('newMessage', savedMessage);
 
             // Получаем всех участников разговора с помощью новой функции
             const participants = await fetchAllParticipantsByConversationIdForMessages(conversation_id);
