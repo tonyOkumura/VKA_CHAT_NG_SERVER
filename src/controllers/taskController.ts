@@ -151,6 +151,9 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
     const { id } = req.params; // ID задачи
     const updates = req.body; // Обновляемые поля { title, description, status, priority, assignee_id, due_date }
 
+    // Логируем входящий запрос
+    console.log(`Попытка обновления задачи ID: ${id} пользователем ${userId}. Данные:`, updates);
+
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
