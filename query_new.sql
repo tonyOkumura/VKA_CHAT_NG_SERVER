@@ -251,3 +251,78 @@ CREATE TRIGGER set_sender_username_trigger
 BEFORE INSERT ON messages
 FOR EACH ROW
 EXECUTE FUNCTION set_sender_username();
+
+-- ======================================
+-- Дополнения для функционала таск-трекера
+-- ======================================
+
+-- 1. Таблица задач
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор задачи
+    title VARCHAR(255) NOT NULL,                          -- Краткое название задачи
+    description TEXT,                                     -- Подробное описание задачи
+    status VARCHAR(50) DEFAULT 'open',                    -- Статус задачи (например, open, in_progress, done, canceled)
+    priority INTEGER DEFAULT 3,                           -- Приоритет задачи (например, 1 – высокий, 5 – низкий)
+    creator_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- Кто создал задачу
+    assignee_id UUID REFERENCES users(id) ON DELETE SET NULL, -- Исполнитель задачи
+    due_date TIMESTAMP,                                   -- Срок выполнения задачи
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,       -- Время создания задачи (московское время)
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время последнего обновления задачи (московское время)
+);
+
+-- 2. Таблица комментариев к задачам
+CREATE TABLE task_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор комментария
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу, к которой оставлен комментарий
+    commenter_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- Пользователь, оставивший комментарий
+    comment TEXT NOT NULL,                                -- Текст комментария
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время оставления комментария (московское время)
+);
+
+-- 3. Таблица файлов (вложений) к задачам
+CREATE TABLE task_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор файла
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу, к которой прикреплён файл
+    file_name VARCHAR(255) NOT NULL,                      -- Имя файла
+    file_path VARCHAR(500) NOT NULL,                      -- Путь к файлу на сервере или в облаке
+    file_type VARCHAR(255),                               -- Тип файла (например, image, document и т.д.)
+    file_size INTEGER,                                    -- Размер файла в байтах
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время загрузки файла (московское время)
+);
+
+-- 4. Таблица логов изменений (истории задач)
+CREATE TABLE task_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор записи логов
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу
+    action VARCHAR(100) NOT NULL,                         -- Тип изменения (например, смена статуса, изменение приоритета)
+    old_value VARCHAR(255),                               -- Старое значение поля (если применимо)
+    new_value VARCHAR(255),                               -- Новое значение поля (если применимо)
+    changed_by UUID REFERENCES users(id) ON DELETE SET NULL,  -- Пользователь, инициировавший изменение
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время изменения (московское время)
+);
+
+-- 5. Триггер для автоматического обновления поля updated_at при изменении задачи
+
+-- Функция обновления поля updated_at
+CREATE OR REPLACE FUNCTION update_task_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Триггер для таблицы tasks
+CREATE TRIGGER update_task_updated_at_trigger
+BEFORE UPDATE ON tasks
+FOR EACH ROW
+EXECUTE FUNCTION update_task_updated_at();
+
+-- 6. Дополнительные индексы для ускорения выборок по задачам
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date);
+
+-- ======================================
+-- Конец дополнений для таск-трекера
+-- ======================================

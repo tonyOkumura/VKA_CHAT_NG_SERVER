@@ -4,10 +4,11 @@ import authRoutes from './routes/authRoutes';
 import conversationsRoutes from './routes/conversationsRoutes';
 import messagesRoutes from './routes/messagesRoutes';
 import filesRoutes from './routes/filesRoutes';
+import contactsRoutes from './routes/contactsRoutes';
+import taskRoutes from './routes/taskRoutes';
 import http from 'http';
 import { Server } from 'socket.io';
 import { saveMessage } from './controllers/messagesController'; // Import saveMessage
-import contactsRoutes from './routes/contactsRoutes';
 import pool from './models/db';
 import { fetchAllParticipantsByConversationId, fetchAllParticipantsByConversationIdForMessages } from './controllers/conversationController';
 import { updateUserOnlineStatus } from './controllers/userController';
@@ -30,11 +31,14 @@ const io = new Server(server, {
     },
 });
 
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
 app.use('/auth', authRoutes);
 app.use('/conversations', conversationsRoutes);
 app.use('/messages', messagesRoutes);
 app.use('/contacts', contactsRoutes);
 app.use('/files', filesRoutes);
+app.use('/tasks', taskRoutes);
 
 app.get('/', (req: Request, res: Response) => {
     console.log("test");
@@ -60,7 +64,7 @@ io.on('connection', async (socket) => {
             io.emit('userStatusChanged', { userId, isOnline: true });
             
             console.log(`Пользователь ${userId} аутентифицирован и отмечен как онлайн`);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Ошибка при аутентификации пользователя:', error);
         }
     });
@@ -100,7 +104,7 @@ io.on('connection', async (socket) => {
                     });
                 }
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Ошибка при обработке прочтения сообщений:', error);
         }
     });
@@ -128,7 +132,7 @@ io.on('connection', async (socket) => {
                     read_at: new Date()
                 });
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Ошибка при отметке сообщений как прочитанных:', error);
         }
     });
@@ -191,8 +195,8 @@ io.on('connection', async (socket) => {
                 });
             }
 
-        } catch (err) {
-            console.error('Не удалось сохранить сообщение:', err);
+        } catch (err: any) {
+            console.error('Не удалось сохранить или отправить сообщение:', err);
         }
     });
 
@@ -213,7 +217,7 @@ io.on('connection', async (socket) => {
                 
                 console.log(`Пользователь ${userId} отмечен как офлайн`);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Ошибка при обработке отключения пользователя:', error);
         }
     });
