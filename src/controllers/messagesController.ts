@@ -14,9 +14,25 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
         // Начинаем транзакцию
         await pool.query('BEGIN');
 
-        // Получаем все сообщения с информацией о прочтении
+        // Получаем все сообщения с информацией о прочтении и файлах
         const messagesResult = await pool.query(
             `
+            WITH message_files AS (
+                SELECT 
+                    message_id,
+                    json_agg(
+                        json_build_object(
+                            'id', id,
+                            'file_name', file_name,
+                            'file_path', file_path,
+                            'file_type', file_type,
+                            'file_size', file_size,
+                            'created_at', created_at
+                        )
+                    ) as files
+                FROM files
+                GROUP BY message_id
+            )
             SELECT 
                 m.id, 
                 m.content, 
@@ -51,9 +67,12 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                     JOIN users u ON u.id = mr.user_id
                     WHERE mr.message_id = m.id),
                     '[]'::json
-                ) AS read_by_users
+                ) AS read_by_users,
+                -- Получаем массив объектов с данными о файлах
+                COALESCE(mf.files, '[]'::json) AS files
             FROM messages m
             JOIN users u ON u.id = m.sender_id
+            LEFT JOIN message_files mf ON mf.message_id = m.id
             WHERE m.conversation_id = $1
             ORDER BY m.created_at ASC
             `,
@@ -91,7 +110,8 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
         res.status(500).json({ error: 'Не удалось получить сообщения' });
     }
 };
-export const saveMessage = async (conversationId: string, senderId: string, content: string, mentions: string[] = []) => {
+
+export const saveMessage = async (conversationId: string, senderId: string, content: string, mentions: string[] = [], fileId?: string) => {
     console.log(`Сохранение сообщения для разговора: ${conversationId}, отправитель: ${senderId}`);
 
     try {
@@ -101,13 +121,25 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
         // Сохраняем сообщение
         const messageResult = await pool.query(
             `
-            INSERT INTO messages (conversation_id, sender_id,content)
+            INSERT INTO messages (conversation_id, sender_id, content)
             VALUES ($1, $2, $3)
             RETURNING *
             `,
             [conversationId, senderId, content]
         );
         const savedMessage = messageResult.rows[0];
+
+        // Если есть файл, связываем его с сообщением
+        if (fileId) {
+            await pool.query(
+                `
+                UPDATE files
+                SET message_id = $1
+                WHERE id = $2
+                `,
+                [savedMessage.id, fileId]
+            );
+        }
 
         // Отмечаем сообщение как прочитанное для отправителя
         await pool.query(
@@ -137,8 +169,33 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
         // Подтверждаем транзакцию
         await pool.query('COMMIT');
 
+        // Получаем полную информацию о сообщении, включая файл, если он есть
+        const fullMessageResult = await pool.query(
+            `
+            SELECT 
+                m.*,
+                COALESCE(
+                    (SELECT json_agg(
+                        json_build_object(
+                            'id', f.id,
+                            'file_name', f.file_name,
+                            'file_type', f.file_type,
+                            'file_size', f.file_size,
+                            'created_at', f.created_at
+                        )
+                    )
+                    FROM files f
+                    WHERE f.message_id = m.id),
+                    '[]'::json
+                ) AS files
+            FROM messages m
+            WHERE m.id = $1
+            `,
+            [savedMessage.id]
+        );
+
         console.log(`Сообщение успешно сохранено для разговора: ${conversationId}`);
-        return savedMessage;
+        return fullMessageResult.rows[0];
     } catch (err) {
         // Откатываем транзакцию в случае ошибки
         await pool.query('ROLLBACK');

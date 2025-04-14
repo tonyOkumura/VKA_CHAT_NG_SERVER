@@ -1,0 +1,5 @@
+docker save -o vka-chat-full.tar vka_chat_ng_server-server:latest postgres:15 dpage/pgadmin4:latest
+
+docker load -i vka-chat-full.tar
+
+docker-compose up
