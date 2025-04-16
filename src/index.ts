@@ -223,7 +223,29 @@ io.on('connection', async (socket) => {
             console.error('Ошибка при обработке отключения пользователя:', error);
         }
     });
+
+    // >>> НАЧАЛО: Новые обработчики для индикаторов набора текста <<<
+    socket.on('start_typing', ({ conversation_id, user_id }) => {
+        console.log(`User ${user_id} started typing in conversation ${conversation_id}`);
+        // Отправляем событие "user_typing" всем в комнате conversation_id, КРОМЕ отправителя
+        socket.to(conversation_id).emit('user_typing', {
+            conversation_id,
+            user_id
+        });
+    });
+
+    socket.on('stop_typing', ({ conversation_id, user_id }) => {
+        console.log(`User ${user_id} stopped typing in conversation ${conversation_id}`);
+        // Отправляем событие "user_stopped_typing" всем в комнате conversation_id, КРОМЕ отправителя
+        socket.to(conversation_id).emit('user_stopped_typing', {
+            conversation_id,
+            user_id
+        });
+    });
+    // >>> КОНЕЦ: Новые обработчики для индикаторов набора текста <<<
+
 });
+
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 6000;
 
