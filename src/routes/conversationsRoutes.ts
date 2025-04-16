@@ -6,15 +6,25 @@ import {
     createDialog,
     createGroupChat,
     fetchAllConversationsByUserId, 
-    fetchAllParticipantsByConversationId 
+    fetchAllParticipantsByConversationId, 
+    removeParticipantFromConversation,
+    updateConversationName
 } from '../controllers/conversationController';
 
 const router = Router();
 
+// Добавляем логгер для всех запросов к этому роутеру
+router.use((req, res, next) => {
+    console.log(`CONVERSATIONS ROUTER: Received ${req.method} request for ${req.originalUrl}`);
+    next(); // Передаем управление следующему обработчику
+});
+
 router.get('/', verifyToken, fetchAllConversationsByUserId);
 router.post('/dialog', verifyToken, createDialog);
 router.post('/group', verifyToken, createGroupChat);
-router.post('/add-participant', verifyToken, addParticipantToConversation);
+router.post('/participants/add', verifyToken, addParticipantToConversation);
+router.delete('/participants/remove', verifyToken, removeParticipantFromConversation);
+router.patch('/details', verifyToken, updateConversationName);
 router.get('/participants', verifyToken, fetchAllParticipantsByConversationId);
 
 export default router;

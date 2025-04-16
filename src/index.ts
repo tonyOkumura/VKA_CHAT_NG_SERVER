@@ -6,6 +6,7 @@ import messagesRoutes from './routes/messagesRoutes';
 import filesRoutes from './routes/filesRoutes';
 import contactsRoutes from './routes/contactsRoutes';
 import taskRoutes from './routes/taskRoutes';
+import usersRoutes from './routes/usersRoutes';
 import http from 'http';
 import { Server } from 'socket.io';
 import { saveMessage } from './controllers/messagesController'; // Import saveMessage
@@ -39,6 +40,7 @@ app.use('/messages', messagesRoutes);
 app.use('/contacts', contactsRoutes);
 app.use('/files', filesRoutes);
 app.use('/tasks', taskRoutes);
+app.use('/api/users', usersRoutes);
 
 app.get('/', (req: Request, res: Response) => {
     console.log("test");

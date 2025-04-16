@@ -220,46 +220,181 @@ export const createGroupChat = async (req: Request, res: Response): Promise<any>
 };
 
 export const addParticipantToConversation = async (req: Request, res: Response): Promise<any> => {
-    const { conversation_id, participant_id } = req.body;
+    const { conversation_id, user_id: participant_id } = req.body;
+    let requestingUserId = null;
+    if (req.user) {
+        requestingUserId = req.user.id;
+    } else {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
 
-    console.log(`Adding participant: ${participant_id} to conversation: ${conversation_id}`);
+    console.log(`User ${requestingUserId} attempting to add participant ${participant_id} to conversation ${conversation_id}`);
 
     try {
-        // Check if the conversation is a group chat
-        const conversation = await pool.query(
-            `SELECT is_group_chat FROM conversations WHERE id = $1`,
+        const conversationResult = await pool.query(
+            `SELECT admin_id, is_group_chat FROM conversations WHERE id = $1`,
             [conversation_id]
         );
 
-        if (conversation.rowCount === 0) {
+        if (conversationResult.rowCount === 0) {
             console.log('Conversation not found');
             return res.status(404).json({ error: 'Conversation not found' });
         }
 
-        if (!conversation.rows[0].is_group_chat) {
+        const { admin_id, is_group_chat } = conversationResult.rows[0];
+
+        if (!is_group_chat) {
             console.log('Cannot add participant to a non-group chat');
-            return res.status(400).json({ error: 'Cannot add participant to a non-group chat' });
+            return res.status(400).json({ error: 'Cannot add participant to a dialog' });
         }
 
-        const result = await pool.query(
+        if (requestingUserId !== admin_id) {
+            console.log('Permission denied: User is not the admin');
+            return res.status(403).json({ error: 'Forbidden: Only the admin can add participants' });
+        }
+        
+        const userExists = await pool.query('SELECT id FROM users WHERE id = $1', [participant_id]);
+        if (userExists.rowCount === 0) {
+            console.log('User to add not found');
+            return res.status(404).json({ error: 'User to add not found' });
+        }
+
+        const participantExists = await pool.query(
+            `SELECT 1 FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2`,
+            [conversation_id, participant_id]
+        );
+
+        if (participantExists.rowCount !== null && participantExists.rowCount > 0) {
+             console.log('Participant already exists in the conversation');
+             return res.status(409).json({ error: 'Participant already exists in this conversation' });
+        }
+
+        await pool.query(
             `
             INSERT INTO conversation_participants (conversation_id, user_id)
-            VALUES ($1, $2)
-            ON CONFLICT DO NOTHING;
+            VALUES ($1, $2);
             `,
             [conversation_id, participant_id]
         );
 
-        if (result.rowCount === 0) {
-            console.log('Participant already exists in the conversation');
-            return res.status(409).json({ error: 'Participant already exists in the conversation' });
-        }
-
-        console.log(`Participant added successfully to conversation: ${conversation_id}`);
-        res.status(201).json({ message: 'Participant added successfully' });
+        console.log(`Participant ${participant_id} added successfully to conversation ${conversation_id} by user ${requestingUserId}`);
+        res.status(201).json({ message: 'Participant added successfully' }); 
     } catch (error) {
         console.error('Error adding participant to conversation:', error);
         res.status(500).json({ error: 'Failed to add participant to conversation' });
+    }
+};
+
+export const removeParticipantFromConversation = async (req: Request, res: Response): Promise<any> => {
+    const { conversation_id, participant_id } = req.body;
+    let requestingUserId = null;
+    if (req.user) {
+        requestingUserId = req.user.id;
+    } else {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log(`User ${requestingUserId} attempting to remove participant ${participant_id} from conversation ${conversation_id}`);
+
+    try {
+        const conversationResult = await pool.query(
+            `SELECT admin_id, is_group_chat FROM conversations WHERE id = $1`,
+            [conversation_id]
+        );
+
+        if (conversationResult.rowCount === 0) {
+            console.log('Conversation not found');
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        const { admin_id, is_group_chat } = conversationResult.rows[0];
+
+        if (!is_group_chat) {
+            console.log('Cannot remove participant from a non-group chat');
+            return res.status(400).json({ error: 'Cannot remove participant from a dialog' });
+        }
+
+        if (requestingUserId !== admin_id) {
+            console.log('Permission denied: User is not the admin');
+            return res.status(403).json({ error: 'Forbidden: Only the admin can remove participants' });
+        }
+
+        if (participant_id === admin_id) {
+            console.log('Attempted to remove the admin');
+            return res.status(400).json({ error: 'Bad Request: Cannot remove the group admin' });
+        }
+
+        const result = await pool.query(
+            `DELETE FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2`,
+            [conversation_id, participant_id]
+        );
+
+        if (result.rowCount === 0) {
+            console.log('Participant not found in this conversation');
+            return res.status(404).json({ error: 'Participant not found in this conversation' }); 
+        }
+
+        console.log(`Participant ${participant_id} removed successfully from conversation ${conversation_id} by user ${requestingUserId}`);
+        res.status(200).json({ message: 'Participant removed successfully' });
+    } catch (error) {
+        console.error('Error removing participant from conversation:', error);
+        res.status(500).json({ error: 'Failed to remove participant from conversation' });
+    }
+};
+
+export const updateConversationName = async (req: Request, res: Response): Promise<any> => {
+    const { conversation_id, conversation_name } = req.body;
+    let requestingUserId = null;
+    if (req.user) {
+        requestingUserId = req.user.id;
+    } else {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    
+    if (!conversation_id || !conversation_name || typeof conversation_name !== 'string' || conversation_name.trim() === '') {
+        return res.status(400).json({ error: 'Bad Request: conversation_id and a non-empty conversation_name string are required in the body' });
+    }
+
+    console.log(`User ${requestingUserId} attempting to rename conversation ${conversation_id} to "${conversation_name}"`);
+
+    try {
+        const conversationResult = await pool.query(
+            `SELECT admin_id, is_group_chat FROM conversations WHERE id = $1`,
+            [conversation_id]
+        );
+
+        if (conversationResult.rowCount === 0) {
+            console.log('Conversation not found');
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+
+        const { admin_id, is_group_chat } = conversationResult.rows[0];
+
+        if (!is_group_chat) {
+            console.log('Cannot rename a non-group chat');
+            return res.status(400).json({ error: 'Bad Request: Cannot rename a dialog' });
+        }
+
+        if (requestingUserId !== admin_id) {
+            console.log('Permission denied: User is not the admin');
+            return res.status(403).json({ error: 'Forbidden: Only the admin can rename the group' });
+        }
+
+        const updateResult = await pool.query(
+            `UPDATE conversations SET name = $1 WHERE id = $2 RETURNING name`,
+            [conversation_name.trim(), conversation_id]
+        );
+        
+        if (updateResult.rowCount === 0) {
+             console.error('Failed to update conversation name after checks');
+             return res.status(500).json({ error: 'Failed to update conversation name' });
+        }
+
+        console.log(`Conversation ${conversation_id} renamed successfully to "${updateResult.rows[0].name}" by user ${requestingUserId}`);
+        res.status(200).json({ conversation_name: updateResult.rows[0].name });
+    } catch (error) {
+        console.error('Error updating conversation name:', error);
+        res.status(500).json({ error: 'Failed to update conversation name' });
     }
 };
 
@@ -307,6 +442,6 @@ export const fetchAllParticipantsByConversationIdForMessages = async (conversati
         return result.rows;
     } catch (error) {
         console.error('Ошибка при получении участников:', error);
-        throw error; // Передаем ошибку дальше для обработки в вызывающем коде
+        throw error;
     }
 };
