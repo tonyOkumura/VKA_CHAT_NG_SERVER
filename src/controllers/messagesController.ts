@@ -173,7 +173,12 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
         const fullMessageResult = await pool.query(
             `
             SELECT 
-                m.*,
+                m.id,
+                m.conversation_id,
+                m.sender_id,
+                m.sender_username,
+                m.content,
+                m.created_at::text AS created_at, -- Convert message created_at to text (ISO 8601)
                 COALESCE(
                     (SELECT json_agg(
                         json_build_object(
@@ -181,7 +186,8 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
                             'file_name', f.file_name,
                             'file_type', f.file_type,
                             'file_size', f.file_size,
-                            'created_at', f.created_at
+                            'created_at', f.created_at::text, -- Convert file created_at to text (ISO 8601)
+                            'download_url', '/api/files/download/' || f.id::text -- Construct download_url
                         )
                     )
                     FROM files f
@@ -195,7 +201,16 @@ export const saveMessage = async (conversationId: string, senderId: string, cont
         );
 
         console.log(`Сообщение успешно сохранено для разговора: ${conversationId}`);
-        return fullMessageResult.rows[0];
+
+        // Process the result to ensure dates are proper ISO strings if needed
+        const finalMessage = fullMessageResult.rows[0];
+        finalMessage.created_at = new Date(finalMessage.created_at).toISOString();
+        finalMessage.files = finalMessage.files.map((file: any) => ({
+            ...file,
+            created_at: new Date(file.created_at).toISOString()
+        }));
+
+        return finalMessage; // Return the processed message object
     } catch (err) {
         // Откатываем транзакцию в случае ошибки
         await pool.query('ROLLBACK');

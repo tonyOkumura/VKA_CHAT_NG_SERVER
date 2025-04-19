@@ -7,10 +7,10 @@ const router = express.Router();
 // Загрузка файла
 router.post('/upload', verifyToken, upload.single('file'), uploadFile);
 
-// Скачивание файла
-router.get('/download/:fileId', verifyToken, downloadFile);
+// Скачивание файла (теперь POST и fileId в теле запроса)
+router.post('/download', verifyToken, downloadFile);
 
-// Получение информации о файле
-router.get('/info/:fileId', verifyToken, getFileInfo);
+// Получение информации о файле (теперь POST и fileId в теле запроса)
+router.post('/info', verifyToken, getFileInfo);
 
 export default router; 
