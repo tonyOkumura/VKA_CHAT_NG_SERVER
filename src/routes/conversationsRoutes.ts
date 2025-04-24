@@ -8,7 +8,10 @@ import {
     fetchAllConversationsByUserId, 
     fetchAllParticipantsByConversationId, 
     removeParticipantFromConversation,
-    updateConversationName
+    updateConversationName,
+    markConversationReadUnread,
+    muteConversation,
+    leaveOrDeleteConversation
 } from '../controllers/conversationController';
 
 const router = Router();
@@ -26,5 +29,10 @@ router.post('/participants/add', verifyToken, addParticipantToConversation);
 router.delete('/participants/remove', verifyToken, removeParticipantFromConversation);
 router.patch('/details', verifyToken, updateConversationName);
 router.get('/participants', verifyToken, fetchAllParticipantsByConversationId);
+
+router.post('/:conversationId/read', verifyToken, markConversationReadUnread);
+router.patch('/:conversationId/mute', verifyToken, muteConversation);
+router.delete('/:conversationId/participants/me', verifyToken, leaveOrDeleteConversation);
+router.delete('/:conversationId', verifyToken, leaveOrDeleteConversation);
 
 export default router;

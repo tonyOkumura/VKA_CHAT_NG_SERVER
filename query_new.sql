@@ -27,8 +27,9 @@ CREATE TABLE conversations (
 CREATE TABLE conversation_participants (
     conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE, -- Идентификатор чата (ссылка на таблицу conversations). Если чат удаляется, запись тоже удаляется (ON DELETE CASCADE).
     user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Идентификатор пользователя (ссылка на таблицу users). Если пользователь удаляется, запись тоже удаляется.
-    unread_count INTEGER DEFAULT 0, -- Сколько непрочитанных сообщений у этого пользователя в этом чате. По умолчанию 0.
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время, когда пользователь присоединился к чату (московское время).
+    is_muted BOOLEAN DEFAULT FALSE, -- Замьючен ли чат для этого пользователя?
+    last_read_timestamp TIMESTAMP, -- Время последнего прочтения сообщений в этом чате пользователем (NULL, если не читал или отметили как непрочитанный)
     PRIMARY KEY (conversation_id, user_id) -- Уникальная комбинация: один пользователь может быть в одном чате только один раз.
 );
 
@@ -39,16 +40,20 @@ CREATE TABLE messages (
     sender_id UUID REFERENCES users(id), -- Кто отправил сообщение (ссылка на таблицу users).
     sender_username VARCHAR(255), -- Имя отправителя на момент отправки сообщения
     content TEXT, -- Текст сообщения (может быть любой длины, например, "Привет, как дела?").
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время отправки сообщения (московское время).
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время отправки сообщения (московское время).
+    -- Новые поля для ответов и редактирования
+    replied_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL, -- ID сообщения, на которое отвечают (если оно удалено, ссылка станет NULL)
+    is_edited BOOLEAN DEFAULT FALSE -- Было ли сообщение отредактировано
 );
 
 -- Таблица message_reads: отслеживает, кто именно прочитал сообщение.
--- Это нужно, чтобы в групповом чате видеть, кто из участников прочитал сообщение.
+-- Теперь используется в основном для отображения статуса конкретных сообщений (две галочки),
+-- а не для подсчета непрочитанных в списке чатов.
 CREATE TABLE message_reads (
-    message_id UUID REFERENCES messages(id) ON DELETE CASCADE, -- Идентификатор сообщения (ссылка на таблицу messages). Если сообщение удаляется, запись тоже удаляется.
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Кто прочитал сообщение (ссылка на таблицу users). Если пользователь удаляется, запись тоже удаляется.
-    read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время, когда сообщение было прочитано (московское время).
-    PRIMARY KEY (message_id, user_id) -- Уникальная комбинация: один пользователь может прочитать одно сообщение только один раз.
+    message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, user_id)
 );
 
 -- Таблица message_mentions: хранит упоминания пользователей в сообщениях (например, @username).
@@ -92,65 +97,42 @@ CREATE TABLE notifications (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время создания уведомления (московское время).
 );
 
--- Триггер: увеличивает счётчик непрочитанных сообщений, когда добавляется новое сообщение.
--- Например, если user1 отправляет сообщение в чат, у всех остальных участников этого чата увеличивается счётчик.
-CREATE OR REPLACE FUNCTION increase_unread_count()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Увеличиваем unread_count для всех участников чата, кроме отправителя.
-    UPDATE conversation_participants
-    SET unread_count = unread_count + 1
-    WHERE conversation_id = NEW.conversation_id
-      AND user_id != NEW.sender_id;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER increase_unread_count_trigger
-AFTER INSERT ON messages
-FOR EACH ROW
-EXECUTE FUNCTION increase_unread_count();
-
--- Триггер: уменьшает счётчик непрочитанных сообщений, когда пользователь прочитал сообщение.
--- Например, если user2 прочитал сообщение, его счётчик уменьшается.
-CREATE OR REPLACE FUNCTION decrease_unread_count()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Уменьшаем unread_count для пользователя, который прочитал сообщение.
-    UPDATE conversation_participants
-    SET unread_count = GREATEST(unread_count - 1, 0) -- GREATEST не даёт счётчику стать меньше 0.
-    WHERE conversation_id = (SELECT conversation_id FROM messages WHERE id = NEW.message_id)
-      AND user_id = NEW.user_id;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER decrease_unread_count_trigger
-AFTER INSERT ON message_reads
-FOR EACH ROW
-EXECUTE FUNCTION decrease_unread_count();
-
 -- Триггер: создаёт уведомление, когда добавляется новое сообщение.
--- Например, если user1 отправляет сообщение, все остальные участники чата получают уведомление.
 CREATE OR REPLACE FUNCTION create_notification_on_message()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Создаём уведомление для всех участников чата, кроме отправителя.
+    -- Создаём уведомление для всех участников чата, кроме отправителя,
+    -- и только если чат не замьючен для получателя.
     INSERT INTO notifications (id, user_id, type, content, related_conversation_id, related_message_id)
     SELECT gen_random_uuid(), cp.user_id, 'new_message',
-           'Новое сообщение от ' || (SELECT username FROM users WHERE id = NEW.sender_id),
+           'Новое сообщение от ' || NEW.sender_username, -- Используем сохраненное имя
            NEW.conversation_id, NEW.id
     FROM conversation_participants cp
     WHERE cp.conversation_id = NEW.conversation_id
-      AND cp.user_id != NEW.sender_id;
+      AND cp.user_id != NEW.sender_id
+      AND cp.is_muted = FALSE; -- Добавлено условие проверки is_muted
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Удаляем старый триггер, если он существует (на всякий случай)
+DROP TRIGGER IF EXISTS increase_unread_count_trigger ON messages;
+-- Удаляем старую функцию, если она существует
+DROP FUNCTION IF EXISTS increase_unread_count();
+
+-- Удаляем старый триггер, если он существует
+DROP TRIGGER IF EXISTS decrease_unread_count_trigger ON message_reads;
+-- Удаляем старую функцию, если она существует
+DROP FUNCTION IF EXISTS decrease_unread_count();
 
 CREATE TRIGGER create_notification_on_message_trigger
 AFTER INSERT ON messages
 FOR EACH ROW
 EXECUTE FUNCTION create_notification_on_message();
+
+-- Дополнительно обновил триггер create_notification_on_message:
+-- 1. Использует NEW.sender_username (так как оно теперь всегда заполняется триггером set_sender_username_trigger).
+-- 2. Добавил проверку cp.is_muted = FALSE, чтобы не создавать уведомления для тех, кто замьютил чат.
 
 -- Триггер: создаёт уведомление, когда пользователя упомянули в сообщении.
 -- Например, если в сообщении написали @user2, user2 получит уведомление.

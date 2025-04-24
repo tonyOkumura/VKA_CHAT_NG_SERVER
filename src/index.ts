@@ -174,71 +174,101 @@ io.on('connection', async (socket: Socket) => {
         const userId = userSockets.get(socket.id);
         if (!userId || userId !== message.sender_id) {
              console.warn(`Auth mismatch or unauthenticated socket ${socket.id} tried to send message:`, message);
-             return; // Ensure sender matches authenticated user
+             // Возможно, стоит отправить ошибку отправителю
+             const authErrorPayload = { message: 'Authentication mismatch or user not authenticated.' };
+             socket.emit('sendMessage_failed', authErrorPayload);
+             return;
         }
-        const { conversation_id, sender_id, content, mentions = [], file_id } = message;
+        // Деструктурируем новые поля из сообщения
+        const { conversation_id, sender_id, content, mentions = [], file_id, replied_to_message_id } = message; // Добавили replied_to_message_id
+
+        // Простая валидация: должно быть либо сообщение, либо файл
+        if (!content && !file_id) {
+            console.warn(`Attempt to send empty message from user ${userId} in conversation ${conversation_id}`);
+            const validationErrorPayload = { message: 'Message content or file cannot be empty.', originalMessage: message };
+            socket.emit('sendMessage_failed', validationErrorPayload);
+            return;
+        }
 
         try {
-            // Сохраняем сообщение и получаем его данные
-            const savedMessage = await saveMessage(conversation_id, sender_id, content, mentions, file_id);
-            console.log(`User ${sender_id} sending message to conversation ${conversation_id}:`);
-            console.log(savedMessage);
+            // Сохраняем сообщение, передавая replied_to_message_id
+            const savedMessage = await saveMessage(
+                conversation_id,
+                sender_id,
+                content || '', // Передаем пустую строку, если content отсутствует (например, при отправке только файла)
+                mentions,
+                file_id,
+                replied_to_message_id // Передаем ID сообщения для ответа
+            );
+            console.log(`User ${sender_id} sending message to conversation ${conversation_id}. Reply to: ${replied_to_message_id || 'none'}`);
+            // console.log(savedMessage); // savedMessage уже содержит все нужные поля, включая данные ответа и is_edited=false
 
-            // Отправляем сообщение всем участникам разговора через сервис
+            // Отправляем полное сохраненное сообщение всем участникам разговора через сервис
+            // Оно уже включает replied_to_*, is_edited и т.д.
             socketService.emitToRoom(conversation_id, 'newMessage', savedMessage);
 
-            // Получаем всех участников разговора с помощью новой функции
+            // Получаем всех участников разговора (если нужно для дополнительной логики, но для уведомлений ниже не обязательно)
             const participants = await fetchAllParticipantsByConversationIdForMessages(conversation_id);
             if (!participants) throw new Error('Не удалось получить участников');
             const memberIds = participants.map((p: any) => p.user_id);
 
-            // Отмечаем сообщение как прочитанное для отправителя
-            await pool.query(
-                `
-                INSERT INTO message_reads (message_id, user_id, read_at)
-                VALUES ($1, $2, NOW())
-                ON CONFLICT (message_id, user_id) DO NOTHING
-                `,
-                [savedMessage.id, sender_id]
-            );
-
-            // Отправляем обновление статуса прочтения всем участникам через сервис
-            const messageReadPayload = {
-                message_id: savedMessage.id,
-                user_id: sender_id,
-                read_at: new Date()
-            };
-            socketService.emitToRoom(conversation_id, 'messageRead', messageReadPayload);
-
             // Отправляем уведомления всем участникам (кроме отправителя) через сервис
             memberIds.forEach((memberId: string) => {
                 if (memberId !== sender_id) {
-                     const notificationPayload = { // Send to individual user room
+                     const notificationPayload = {
                         type: 'new_message',
-                        content: `Новое сообщение от ${savedMessage.sender_username || sender_id}`, // Use username if available
+                        content: `Новое сообщение от ${savedMessage.sender_username || sender_id}`,
                         related_conversation_id: conversation_id,
                         related_message_id: savedMessage.id
                     };
-                     socketService.emitToUser(memberId, 'notification', notificationPayload); // Используем emitToUser
+                     socketService.emitToUser(memberId, 'notification', notificationPayload);
                 }
             });
 
             // Отправляем уведомления об упоминаниях
             if (mentions.length > 0) {
                 mentions.forEach((mentionedUserId: string) => {
-                    const mentionPayload = { // Send to individual user room
-                        type: 'mention',
-                        content: `Вас упомянули в сообщении от ${savedMessage.sender_username || sender_id}`, // Use username if available
-                        related_conversation_id: conversation_id,
-                        related_message_id: savedMessage.id
-                    };
-                    socketService.emitToUser(mentionedUserId, 'notification', mentionPayload); // Используем emitToUser
+                    // Убедимся, что не отправляем уведомление об упоминании самому себе
+                    if (mentionedUserId !== sender_id) {
+                        const mentionPayload = {
+                            type: 'mention',
+                            content: `Вас упомянули в сообщении от ${savedMessage.sender_username || sender_id}`,
+                            related_conversation_id: conversation_id,
+                            related_message_id: savedMessage.id
+                        };
+                        socketService.emitToUser(mentionedUserId, 'notification', mentionPayload);
+                    }
                 });
             }
 
+             // Отметка о прочтении для отправителя и рассылка статуса прочтения всем
+             // (Перенес из saveMessage, так как там это не очень логично)
+             try {
+                 await pool.query(
+                     `
+                     INSERT INTO message_reads (message_id, user_id, read_at)
+                     VALUES ($1, $2, NOW())
+                     ON CONFLICT (message_id, user_id) DO NOTHING
+                     `,
+                     [savedMessage.id, sender_id]
+                 );
+                 // Отправляем обновление статуса прочтения всем участникам через сервис
+                 const messageReadPayload = {
+                     conversation_id: conversation_id, // Добавляем ID чата
+                     message_id: savedMessage.id,
+                     user_id: sender_id,
+                     read_at: new Date().toISOString() // Используем ISO строку для консистентности
+                 };
+                 socketService.emitToRoom(conversation_id, 'messageReadUpdate', messageReadPayload); // Используем другое событие, чтобы не путать с messagesRead
+
+             } catch(readErr) {
+                 console.error(`Failed to mark message ${savedMessage.id} as read for sender ${sender_id}:`, readErr);
+                 // Не прерываем основной процесс
+             }
+
         } catch (err: any) {
             console.error(`Failed to save or send message from user ${userId}:`, err);
-            // Optionally emit an error back to the sender
+            // Отправляем ошибку отправителю
             const sendErrorPayload = { message: err.message || 'Failed to send message', originalMessage: message };
             console.log(`[Socket Emit] Event: sendMessage_failed | Target: Socket ${socket.id}`);
             socket.emit('sendMessage_failed', sendErrorPayload);
