@@ -43,7 +43,11 @@ CREATE TABLE messages (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время отправки сообщения (московское время).
     -- Новые поля для ответов и редактирования
     replied_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL, -- ID сообщения, на которое отвечают (если оно удалено, ссылка станет NULL)
-    is_edited BOOLEAN DEFAULT FALSE -- Было ли сообщение отредактировано
+    is_edited BOOLEAN DEFAULT FALSE, -- Было ли сообщение отредактировано
+    is_forwarded BOOLEAN DEFAULT FALSE,
+    forwarded_from_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    forwarded_from_username VARCHAR(255),
+    original_message_id UUID REFERENCES messages(id) ON DELETE SET NULL
 );
 
 -- Таблица message_reads: отслеживает, кто именно прочитал сообщение.
@@ -308,3 +312,18 @@ CREATE INDEX idx_tasks_due_date ON tasks(due_date);
 -- ======================================
 -- Конец дополнений для таск-трекера
 -- ======================================
+
+-- Создание таблицы pinned_messages
+CREATE TABLE pinned_messages (
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    pinned_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    pinned_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (conversation_id, message_id)
+);
+
+-- Пример индекса для pinned_messages
+CREATE INDEX idx_pinned_messages_conversation_pinned_at ON pinned_messages(conversation_id, pinned_at DESC);
+
+-- Пример индекса для messages (если еще нет)
+CREATE INDEX idx_messages_conversation_created_at ON messages(conversation_id, created_at DESC);

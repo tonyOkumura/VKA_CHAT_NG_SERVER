@@ -3,12 +3,15 @@ import { verifyToken } from '../middlewares/authMiddleware';
 import {
     fetchAllMessagesByConversationId,
     editMessage,
-    deleteMessage
+    deleteMessage,
+    forwardMessages
 } from '../controllers/messagesController';
 
 const router = Router();
 
 router.get('/:conversation_id', verifyToken, fetchAllMessagesByConversationId);
+
+router.post('/forward', verifyToken, forwardMessages);
 
 router.patch('/', verifyToken, editMessage);
 

@@ -11,7 +11,8 @@ import {
     updateConversationName,
     markConversationReadUnread,
     muteConversation,
-    leaveOrDeleteConversation
+    leaveOrDeleteConversation,
+    togglePinMessage
 } from '../controllers/conversationController';
 
 const router = Router();
@@ -30,6 +31,7 @@ router.delete('/participants/remove', verifyToken, removeParticipantFromConversa
 router.patch('/details', verifyToken, updateConversationName);
 router.get('/participants', verifyToken, fetchAllParticipantsByConversationId);
 
+router.post('/pin/toggle', verifyToken, togglePinMessage);
 router.post('/:conversationId/read', verifyToken, markConversationReadUnread);
 router.patch('/:conversationId/mute', verifyToken, muteConversation);
 router.delete('/:conversationId/participants/me', verifyToken, leaveOrDeleteConversation);

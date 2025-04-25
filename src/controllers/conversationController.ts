@@ -6,7 +6,31 @@ import * as socketService from '../services/socketService';
 // Тип для данных из req.user
 interface AuthenticatedUser {
     id: string;
+    username?: string;
 }
+
+// Helper function to check user participation
+const isUserParticipant = async (userId: string, conversationId: string): Promise<boolean> => {
+    const result = await pool.query(
+        'SELECT 1 FROM conversation_participants WHERE user_id = $1 AND conversation_id = $2',
+        [userId, conversationId]
+    );
+    return result.rowCount !== null && result.rowCount > 0;
+};
+
+// Helper function to fetch pinned message IDs for a conversation
+const fetchPinnedMessageIds = async (conversationId: string): Promise<string[]> => {
+    try {
+        const result = await pool.query(
+            'SELECT message_id FROM pinned_messages WHERE conversation_id = $1 ORDER BY pinned_at DESC',
+            [conversationId]
+        );
+        return result.rows.map(row => row.message_id);
+    } catch (error) {
+        console.error(`Error fetching pinned messages for conversation ${conversationId}:`, error);
+        return []; // Return empty array on error
+    }
+};
 
 export const fetchAllConversationsByUserId = async (req: Request, res: Response) => {
     let userId: string | null = null;
@@ -45,7 +69,10 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                     content,
                     created_at,
                     sender_id,
-                    sender_username
+                    sender_username,
+                    -- Include forwarding info for last message preview if needed
+                    is_forwarded,
+                    forwarded_from_username
                 FROM messages
                 ORDER BY conversation_id, created_at DESC
             ),
@@ -65,14 +92,25 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                 GROUP BY cp.conversation_id
             ),
             unread_counts AS (
+                -- Existing unread count logic (based on last_read_timestamp)
+                -- Consider if this needs adjustment with message reads table
                 SELECT
                     m.conversation_id,
                     COUNT(m.id) AS unread_count
                 FROM messages m
                 JOIN conversation_participants cp ON m.conversation_id = cp.conversation_id AND cp.user_id = $1
-                WHERE m.sender_id != $1
-                  AND m.created_at > COALESCE(cp.last_read_timestamp, '1970-01-01'::timestamp)
+                LEFT JOIN message_reads mr ON mr.message_id = m.id AND mr.user_id = cp.user_id
+                WHERE m.sender_id != $1 AND mr.message_id IS NULL -- Count messages not read by the user
+                -- WHERE m.sender_id != $1 -- Alternative: Count all messages not sent by the user
+                -- AND m.created_at > COALESCE(cp.last_read_timestamp, '1970-01-01'::timestamp) -- Keep timestamp logic? Or rely purely on message_reads? Let's keep timestamp for now.
                 GROUP BY m.conversation_id
+            ),
+             pinned_ids AS ( -- CTE to get pinned message IDs per conversation
+                 SELECT
+                     conversation_id,
+                     array_agg(message_id ORDER BY pinned_at DESC) as pinned_message_ids
+                 FROM pinned_messages
+                 GROUP BY conversation_id
             )
             SELECT
                 c.id AS conversation_id,
@@ -84,10 +122,18 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                 lm.content AS last_message,
                 lm.created_at AS last_message_time,
                 lm.sender_id AS last_message_sender_id,
+                -- Add prefix if last message was forwarded
+                CASE
+                    WHEN lm.is_forwarded THEN '[Переслано от ' || COALESCE(lm.forwarded_from_username, 'Unknown') || '] ' || lm.content
+                    ELSE lm.content
+                END AS last_message_content_preview, -- Modified field name
                 lm.sender_username AS last_message_sender_username,
+                lm.is_forwarded AS last_message_is_forwarded, -- Include flag
+                lm.forwarded_from_username AS last_message_forwarded_from, -- Include original sender name
                 COALESCE(uc.unread_count, 0) AS unread_count,
                 cp.is_muted,
                 cp.last_read_timestamp::text AS last_read_timestamp,
+                COALESCE(p_ids.pinned_message_ids, '{}'::uuid[]) AS pinned_message_ids, -- Get pinned IDs, default to empty array
                 pi.participants,
                 c.created_at AS conversation_created_at
             FROM conversations c
@@ -97,19 +143,23 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
             LEFT JOIN last_messages lm ON lm.conversation_id = c.id
             LEFT JOIN unread_counts uc ON uc.conversation_id = c.id
             LEFT JOIN participants_info pi ON pi.conversation_id = c.id
+            LEFT JOIN pinned_ids p_ids ON p_ids.conversation_id = c.id -- Join CTE for pinned IDs
             ORDER BY lm.created_at DESC NULLS LAST
             `,
             [userId]
         );
 
+        // Map results and format dates
         const formattedResults = result.rows.map(row => ({
             ...row,
             last_message_time: row.last_message_time ? new Date(row.last_message_time).toISOString() : null,
             last_read_timestamp: row.last_read_timestamp ? new Date(row.last_read_timestamp).toISOString() : null,
-            conversation_created_at: new Date(row.conversation_created_at).toISOString()
+            conversation_created_at: new Date(row.conversation_created_at).toISOString(),
+            // pinned_message_ids is already an array from the query
         }));
 
-        console.log(`Чаты успешно получены для пользователя: ${userId} (с подсчетом unread по timestamp)`);
+
+        console.log(`Чаты успешно получены для пользователя: ${userId}`);
         res.json(formattedResults);
     } catch (e) {
         const error = e as Error;
@@ -679,3 +729,91 @@ export const leaveOrDeleteConversation = async (req: Request, res: Response) => 
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 };
+
+// --- Pinning Logic ---
+export const togglePinMessage = async (req: Request, res: Response): Promise<void> => {
+    // Get IDs from request body instead of params
+    const { conversationId, messageId } = req.body;
+    let userId: string | null = null;
+
+    // Basic validation for body parameters
+    if (!conversationId || typeof conversationId !== 'string' || !messageId || typeof messageId !== 'string') {
+        res.status(400).json({ error: 'Необходимо указать conversationId и messageId в теле запроса' });
+        return;
+    }
+
+    if (req.user) {
+        userId = (req.user as AuthenticatedUser).id;
+    } else {
+        res.status(401).json({ error: 'Пользователь не авторизован' });
+        return;
+    }
+
+    console.log(`User ${userId} attempting to toggle pin for message ${messageId} in conversation ${conversationId}`);
+
+    try {
+        // 1. Verify user is a participant
+        const participant = await isUserParticipant(userId, conversationId);
+        if (!participant) {
+            console.warn(`User ${userId} is not a participant of conversation ${conversationId}.`);
+            res.status(403).json({ error: 'Вы не являетесь участником этого чата' });
+            return;
+        }
+
+        // 2. Verify message exists in the conversation
+        const messageExists = await pool.query(
+            'SELECT 1 FROM messages WHERE id = $1 AND conversation_id = $2',
+            [messageId, conversationId]
+        );
+        if (messageExists.rowCount === 0) {
+            console.warn(`Message ${messageId} not found in conversation ${conversationId}.`);
+            res.status(404).json({ error: 'Сообщение не найдено в этом чате' });
+            return;
+        }
+
+        // 3. Check if already pinned
+        const existingPin = await pool.query(
+            'SELECT 1 FROM pinned_messages WHERE conversation_id = $1 AND message_id = $2',
+            [conversationId, messageId]
+        );
+
+        // 4. Perform toggle action
+        if (existingPin.rowCount !== null && existingPin.rowCount > 0) {
+            // Unpin
+            await pool.query(
+                'DELETE FROM pinned_messages WHERE conversation_id = $1 AND message_id = $2',
+                [conversationId, messageId]
+            );
+            console.log(`Message ${messageId} unpinned by user ${userId} in conversation ${conversationId}`);
+        } else {
+            // Pin
+            await pool.query(
+                'INSERT INTO pinned_messages (conversation_id, message_id, pinned_by_user_id, pinned_at) VALUES ($1, $2, $3, NOW())',
+                [conversationId, messageId, userId]
+            );
+             console.log(`Message ${messageId} pinned by user ${userId} in conversation ${conversationId}`);
+        }
+
+        // 5. Fetch the updated list of pinned message IDs
+        const updatedPinnedIds = await fetchPinnedMessageIds(conversationId);
+
+        // 6. Emit WebSocket event
+        const eventPayload = {
+            id: conversationId,
+            pinned_message_ids: updatedPinnedIds
+        };
+        socketService.emitToRoom(conversationId, 'conversationUpdated', eventPayload);
+         console.log(`Emitted 'conversationUpdated' to room ${conversationId} with updated pinned messages.`);
+
+        // 7. Send response
+        res.status(200).json({
+            success: true,
+            pinned_message_ids: updatedPinnedIds
+        });
+
+    } catch (error) {
+        console.error(`Error toggling pin for message ${messageId} by user ${userId}:`, error);
+        res.status(500).json({ error: 'Ошибка сервера при закреплении/откреплении сообщения' });
+    }
+};
+// --- End Pinning Logic ---

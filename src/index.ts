@@ -174,37 +174,34 @@ io.on('connection', async (socket: Socket) => {
         const userId = userSockets.get(socket.id);
         if (!userId || userId !== message.sender_id) {
              console.warn(`Auth mismatch or unauthenticated socket ${socket.id} tried to send message:`, message);
-             // Возможно, стоит отправить ошибку отправителю
              const authErrorPayload = { message: 'Authentication mismatch or user not authenticated.' };
              socket.emit('sendMessage_failed', authErrorPayload);
              return;
         }
-        // Деструктурируем новые поля из сообщения
-        const { conversation_id, sender_id, content, mentions = [], file_id, replied_to_message_id } = message; // Добавили replied_to_message_id
+        // Деструктурируем message, ожидая fileIds (массив)
+        const { conversation_id, sender_id, content, mentions = [], fileIds = [], replied_to_message_id } = message; // Изменено file_id на fileIds
 
-        // Простая валидация: должно быть либо сообщение, либо файл
-        if (!content && !file_id) {
-            console.warn(`Attempt to send empty message from user ${userId} in conversation ${conversation_id}`);
-            const validationErrorPayload = { message: 'Message content or file cannot be empty.', originalMessage: message };
+        // Валидация: должно быть либо сообщение, либо файл(ы)
+        if (!content && (!fileIds || fileIds.length === 0)) { // Проверка на пустой массив fileIds
+            console.warn(`Attempt to send empty message (no content or files) from user ${userId} in conversation ${conversation_id}`);
+            const validationErrorPayload = { message: 'Message content or files cannot be empty.', originalMessage: message }; // Обновлен текст ошибки
             socket.emit('sendMessage_failed', validationErrorPayload);
             return;
         }
 
         try {
-            // Сохраняем сообщение, передавая replied_to_message_id
+            // Сохраняем сообщение, передавая fileIds
             const savedMessage = await saveMessage(
                 conversation_id,
                 sender_id,
-                content || '', // Передаем пустую строку, если content отсутствует (например, при отправке только файла)
+                content || '',
                 mentions,
-                file_id,
-                replied_to_message_id // Передаем ID сообщения для ответа
+                fileIds, // Передаем массив fileIds
+                replied_to_message_id
             );
-            console.log(`User ${sender_id} sending message to conversation ${conversation_id}. Reply to: ${replied_to_message_id || 'none'}`);
-            // console.log(savedMessage); // savedMessage уже содержит все нужные поля, включая данные ответа и is_edited=false
+            console.log(`User ${sender_id} sending message to conversation ${conversation_id}. Files: ${fileIds.length}, Reply to: ${replied_to_message_id || 'none'}`);
 
-            // Отправляем полное сохраненное сообщение всем участникам разговора через сервис
-            // Оно уже включает replied_to_*, is_edited и т.д.
+            // Отправляем полное сохраненное сообщение (уже содержит все поля)
             socketService.emitToRoom(conversation_id, 'newMessage', savedMessage);
 
             // Получаем всех участников разговора (если нужно для дополнительной логики, но для уведомлений ниже не обязательно)
