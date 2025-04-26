@@ -464,7 +464,7 @@ export const forwardMessages = async (req: Request, res: Response): Promise<void
     const user = req.user as AuthenticatedUser;
 
     // Validation
-    if (!user || !user.id || !user.username) {
+    if (!user || !user.id ) {
         res.status(401).json({ error: 'Пользователь не аутентифицирован или данные пользователя неполны' });
         return;
     }
