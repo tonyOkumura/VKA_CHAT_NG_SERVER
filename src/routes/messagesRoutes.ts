@@ -9,7 +9,7 @@ import {
 
 const router = Router();
 
-router.get('/:conversation_id', verifyToken, fetchAllMessagesByConversationId);
+router.get('/', verifyToken, fetchAllMessagesByConversationId);
 
 router.post('/forward', verifyToken, forwardMessages);
 

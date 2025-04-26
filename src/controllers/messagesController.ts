@@ -12,19 +12,38 @@ interface AuthenticatedUser {
 
 // Добавляем новые поля в запрос
 export const fetchAllMessagesByConversationId = async (req: Request, res: Response): Promise<void> => {
-    const { conversation_id } = req.params; // Получаем ID разговора из параметров запроса
-    let userId: string | null = null; // Явное указание типа
-    if (req.user) {
-        userId = (req.user as AuthenticatedUser).id; // Предполагаем, что ID пользователя доступен через req.user от middleware аутентификации
+    // Get conversation_id from request body
+    const { conversation_id } = req.body;
+    // Get limit and offset from query parameters
+    const limit = parseInt(req.query.limit as string || '50', 10);
+    const offset = parseInt(req.query.offset as string || '0', 10);
+
+    // Validate conversation_id from body
+    if (!conversation_id || typeof conversation_id !== 'string') {
+        res.status(400).json({ error: 'Необходимо указать conversation_id в теле запроса' });
+        return;
     }
 
-    console.log(`Получение сообщений для разговора: ${conversation_id}, пользователь: ${userId || 'Анонимный'}`);
+    let userId: string | null = null;
+    if (req.user) {
+        userId = (req.user as AuthenticatedUser).id;
+    } else {
+        res.status(401).json({ error: 'Пользователь не авторизован' });
+        return;
+    }
+
+    console.log(`Получение сообщений для разговора: ${conversation_id} (из тела), user: ${userId}, limit: ${limit}, offset: ${offset}`);
 
     try {
-        // Начинаем транзакцию
-        // await pool.query('BEGIN'); // Убрал транзакцию, т.к. отметка прочитанных идет после ответа
+        // 1. Verify user is a participant of the conversation
+        const participant = await isUserParticipant(userId, conversation_id);
+        if (!participant) {
+            console.warn(`User ${userId} attempted to access conversation ${conversation_id} without being a participant.`);
+            res.status(403).json({ error: 'Доступ запрещен: Вы не являетесь участником этого чата' });
+            return;
+        }
 
-        // Получаем все сообщения с информацией об ответе, прочтении и файлах
+        // 2. Fetch messages with pagination
         const messagesResult = await pool.query(
             `
             WITH message_files AS (
@@ -63,21 +82,21 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                 m.id,
                 m.content,
                 m.sender_id,
-                m.sender_username, -- Имя отправителя на момент отправки
-                -- u.username AS sender_username_current, -- Текущее имя отправителя (если нужно)
+                m.sender_username,
                 m.conversation_id,
-                m.created_at::text AS created_at, -- Convert message created_at to text (ISO 8601)
+                m.created_at::text AS created_at,
                 m.is_edited,
                 m.replied_to_message_id,
-                -- Данные об исходном сообщении для ответа
                 replied_msg.sender_username AS replied_to_sender_username,
-                -- Генерируем превью контента (например, первые 50 символов)
                 CASE
                     WHEN replied_msg.content IS NOT NULL THEN LEFT(replied_msg.content, 50) || CASE WHEN LENGTH(replied_msg.content) > 50 THEN '...' ELSE '' END
                     WHEN replied_file.file_name IS NOT NULL THEN 'Файл: ' || replied_file.file_name
                     ELSE NULL
                 END AS replied_to_content_preview,
-                -- Прочитано ли сообщение текущим пользователем (если он авторизован)
+                m.is_forwarded,
+                m.forwarded_from_user_id,
+                m.forwarded_from_username,
+                m.original_message_id,
                 CASE
                     WHEN $2::UUID IS NOT NULL THEN EXISTS (
                         SELECT 1
@@ -85,80 +104,42 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                         WHERE mr.message_id = m.id
                         AND mr.user_id = $2::UUID
                     )
-                    ELSE FALSE -- Для неавторизованных всегда false
+                    ELSE FALSE
                 END AS is_read_by_current_user,
-                -- Получаем массив объектов прочитавших пользователей
                  COALESCE(mra.read_by_users, '[]'::json) AS read_by_users,
-                -- Получаем массив объектов с данными о файлах
                 COALESCE(mf.files, '[]'::json) AS files
             FROM messages m
-            -- JOIN users u ON u.id = m.sender_id -- Убрали JOIN, т.к. username берем из m.sender_username
             LEFT JOIN message_files mf ON mf.message_id = m.id
             LEFT JOIN message_reads_agg mra ON mra.message_id = m.id
-            -- Присоединяем данные об отвеченном сообщении
             LEFT JOIN messages replied_msg ON replied_msg.id = m.replied_to_message_id
             LEFT JOIN (SELECT message_id, file_name FROM files LIMIT 1) replied_file ON replied_file.message_id = replied_msg.id
             WHERE m.conversation_id = $1
-            ORDER BY m.created_at ASC
+            ORDER BY m.created_at DESC
+            LIMIT $3
+            OFFSET $4
             `,
-            [conversation_id, userId] // Передаем userId как второй параметр
+            [conversation_id, userId, limit, offset] // Parameters order: conversation_id, userId, limit, offset
         );
 
-        // Форматируем даты и добавляем is_unread для текущего пользователя
+        // 3. Format results
         const formattedMessages = messagesResult.rows.map(msg => ({
             ...msg,
             created_at: new Date(msg.created_at).toISOString(),
-            read_by_users: msg.read_by_users.map((reader: any) => ({
-                ...reader,
-                read_at: new Date(reader.read_at).toISOString()
-            })),
-            files: msg.files.map((file: any) => ({
-                ...file,
-                created_at: new Date(file.created_at).toISOString()
-            })),
-            // is_unread вычисляем на клиенте на основе read_by_users или is_read_by_current_user
-            is_unread: userId ? !msg.is_read_by_current_user && msg.sender_id !== userId : false
+            read_by_users: msg.read_by_users.map((reader: any) => ({ ...reader, read_at: new Date(reader.read_at).toISOString() })),
+            files: msg.files.map((file: any) => ({ ...file, created_at: new Date(file.created_at).toISOString() })),
+            // is_unread is now determined client-side based on is_read_by_current_user or comparison with last read timestamp
+            is_unread: !msg.is_read_by_current_user && msg.sender_id !== userId
         }));
 
-        // Если пользователь авторизован, отмечаем все полученные сообщения как прочитанные для него
-        // (Это произойдет только после успешного получения сообщений)
-        if (userId && formattedMessages.length > 0) {
-            const messageIds = formattedMessages.map(msg => msg.id);
-            try {
-                await pool.query(
-                    `
-                    INSERT INTO message_reads (message_id, user_id, read_at)
-                    SELECT unnest($1::uuid[]), $2, NOW()
-                    ON CONFLICT (message_id, user_id) DO NOTHING
-                    `,
-                    [messageIds, userId]
-                );
-                 console.log(`Сообщения [${messageIds.join(', ')}] в разговоре ${conversation_id} отмечены как прочитанные для пользователя ${userId}`);
+        // 4. << REMOVED AUTOMATIC MARK AS READ LOGIC >>
+        // Fetching messages should NOT automatically mark them as read.
+        // Client should use 'markMessagesAsRead' event or similar mechanism.
 
-                 // Отправляем событие о прочтении через WebSocket всем участникам
-                const markReadPayload = {
-                    conversation_id,
-                    user_id: userId,
-                    message_ids: messageIds,
-                    read_at: new Date().toISOString()
-                };
-                socketService.emitToRoom(conversation_id, 'messagesRead', markReadPayload);
-
-            } catch (readError) {
-                 console.error(`Ошибка при отметке сообщений как прочитанных для пользователя ${userId} в разговоре ${conversation_id}:`, readError);
-                 // Не прерываем выполнение, просто логируем ошибку
-            }
-        }
-
-        // Подтверждаем транзакцию - убрал, т.к. транзакцию убрал выше
-        // await pool.query('COMMIT');
-
-        console.log(`Сообщения успешно получены для разговора: ${conversation_id}`);
-        // Не переворачиваем, так как ORDER BY ASC
+        console.log(`Сообщения успешно получены для разговора: ${conversation_id} (limit: ${limit}, offset: ${offset})`);
+        // Send messages (usually newest first due to ORDER BY DESC)
         res.json(formattedMessages);
+
     } catch (err) {
-        // Откатываем транзакцию в случае ошибки - убрал
-        // await pool.query('ROLLBACK');
         console.error(`Не удалось получить сообщения для разговора ${conversation_id} - ${(err as Error).message}`);
         res.status(500).json({ error: 'Не удалось получить сообщения' });
     }
