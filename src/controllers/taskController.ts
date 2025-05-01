@@ -6,6 +6,13 @@ import fs from 'fs'; // Добавляем импорт fs
 // import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
 
+// Интерфейс для пользователя из req.user (допустим, он есть)
+interface AuthenticatedUser {
+    id: string;
+    username: string;
+    // Другие поля, если есть (например, isAdmin)
+}
+
 // Helper function to get user details (avoids repetition)
 const getUserDetails = async (userId: string | null | undefined, client?: PoolClient): Promise<{ id: string | null | undefined, username: string | null }> => {
     if (!userId) return { id: userId, username: null };
@@ -128,16 +135,18 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
 
 // Функция для получения задачи по ID
 export const getTaskById = async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user?.id; // ID текущего пользователя
-    const { id } = req.params; // Получаем ID задачи из параметров URL
+    const userId = (req.user as AuthenticatedUser)?.id; // ID текущего пользователя
+    // const { id } = req.params; // Старый способ
+    const { taskId } = req.body; // Новый способ - ID из тела
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!id) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+    // if (!id) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
 
@@ -152,11 +161,13 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
             WHERE t.id = $1
         `;
         
-        const result = await pool.query(queryText, [id]);
+        // const result = await pool.query(queryText, [id]); // Старый запрос
+        const result = await pool.query(queryText, [taskId]); // Новый запрос
 
         if (result.rows.length === 0) {
             res.status(404).json({ error: 'Задача не найдена.' });
-            console.log(`Попытка доступа к несуществующей задаче ID: ${id} пользователем ${userId}`);
+            // console.log(`Попытка доступа к несуществующей задаче ID: ${id} пользователем ${userId}`); // Старый лог
+            console.log(`Попытка доступа к несуществующей задаче ID: ${taskId} пользователем ${userId}`); // Новый лог
             return;
         }
 
@@ -166,7 +177,8 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
         if (task.creator_id !== userId && task.assignee_id !== userId) {
              // Можно расширить логику доступа, например, для администраторов или участников проекта
             res.status(403).json({ error: 'Доступ к этой задаче запрещен.' });
-            console.log(`Пользователь ${userId} пытался получить доступ к задаче ${id}, к которой не имеет отношения.`);
+            // console.log(`Пользователь ${userId} пытался получить доступ к задаче ${id}, к которой не имеет отношения.`); // Старый лог
+            console.log(`Пользователь ${userId} пытался получить доступ к задаче ${taskId}, к которой не имеет отношения.`); // Новый лог
             return;
         }
 
@@ -179,10 +191,12 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
         };
 
         res.status(200).json(taskWithIsoDates);
-        console.log(`Получена задача ID: ${id} пользователем ${userId}`);
+        // console.log(`Получена задача ID: ${id} пользователем ${userId}`); // Старый лог
+        console.log(`Получена задача ID: ${taskId} пользователем ${userId}`); // Новый лог
 
     } catch (error: any) { // Указываем тип any
-        console.error(`Ошибка при получении задачи ID ${id}:`, error);
+        // console.error(`Ошибка при получении задачи ID ${id}:`, error); // Старый лог
+        console.error(`Ошибка при получении задачи ID ${taskId}:`, error); // Новый лог
         // Проверка на неверный формат UUID
         if (error.code === '22P02') { 
              res.status(400).json({ error: 'Неверный формат ID задачи.' });
@@ -195,19 +209,21 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
 
 // Функция для обновления задачи
 export const updateTask = async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user?.id;
-    const { id: taskId } = req.params; // Rename id to taskId for clarity
-    const updates = req.body;
+    const userId = (req.user as AuthenticatedUser)?.id;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId, ...updates } = req.body; // Получаем taskId и остальные обновления из тела
 
-    console.log(`Попытка обновления задачи ID: ${taskId} пользователем ${userId}. Данные:`, updates);
+    // console.log(`Попытка обновления задачи ID: ${taskId} пользователем ${userId}. Данные:`, updates); // taskId из params
+    console.log(`Попытка обновления задачи ID: ${taskId} (из тела) пользователем ${userId}. Данные:`, updates);
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+    // if (!taskId) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
 
@@ -388,18 +404,21 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
 
 // Функция для удаления задачи
 export const deleteTask = async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user?.id;
-    const { id: taskId } = req.params; // Rename id to taskId
+    const userId = (req.user as AuthenticatedUser)?.id;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId } = req.body; // Новый способ
 
-    console.log(`Попытка удаления задачи ID: ${taskId} пользователем ${userId}.`);
+    // console.log(`Попытка удаления задачи ID: ${taskId} пользователем ${userId}.`); // Старый лог
+    console.log(`Попытка удаления задачи ID: ${taskId} (из тела) пользователем ${userId}.`);
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+    // if (!taskId) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
 
@@ -502,18 +521,20 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
 // Функция для добавления комментария к задаче
 export const addTaskComment = async (req: Request, res: Response): Promise<void> => {
     const commenter_id = req.user?.id;
-    const { id: taskId } = req.params; // ID задачи
-    const { comment } = req.body;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId, comment } = req.body; // Новый способ: taskId и comment из тела
 
-     console.log(`Попытка добавить комментарий к задаче ID: ${taskId} пользователем ${commenter_id}.`);
+     // console.log(`Попытка добавить комментарий к задаче ID: ${taskId} пользователем ${commenter_id}.`); // Старый лог
+     console.log(`Попытка добавить комментарий к задаче ID: ${taskId} (из тела) пользователем ${commenter_id}.`);
 
     if (!commenter_id) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId || !comment) {
-        res.status(400).json({ error: 'Необходимо указать ID задачи и текст комментария.' });
+    // if (!taskId || !comment) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string' || !comment || typeof comment !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Необходимо указать ID задачи (taskId) и текст комментария (comment) в теле запроса.' });
         return;
     }
 
@@ -589,20 +610,23 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
 
 // Функция для получения комментариев к задаче
 export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user?.id;
-    const { id: taskId } = req.params;
+     const userId = (req.user as AuthenticatedUser)?.id;
+     // const { id: taskId } = req.params; // Старый способ
+     const { taskId } = req.body; // Новый способ
 
-    console.log(`Запрос комментариев к задаче ID: ${taskId} пользователем ${userId}.`);
+     // console.log(`Запрос комментариев к задаче ID: ${taskId} пользователем ${userId}.`); // Старый лог
+     console.log(`Запрос комментариев к задаче ID: ${taskId} (из тела) пользователем ${userId}.`);
 
-    if (!userId) {
+     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
-    }
+     }
 
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
-        return;
-    }
+     // if (!taskId) { // Старая проверка
+     if (!taskId || typeof taskId !== 'string') { // Новая проверка
+         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
+         return;
+     }
 
     try {
         // 1. Проверяем существование задачи и права доступа (просматривать может создатель или исполнитель)
@@ -653,10 +677,12 @@ export const getTaskComments = async (req: Request, res: Response): Promise<void
 // Функция для добавления вложения к задаче
 export const addTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const uploader_id = req.user?.id;
-    const { id: taskId } = req.params;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId } = req.body; // Ожидаем taskId в теле form-data 
     const file = req.file; // Получаем файл из multer
 
-    console.log(`Попытка добавить вложение к задаче ID: ${taskId} пользователем ${uploader_id}. Файл:`, file);
+    // console.log(`Попытка добавить вложение к задаче ID: ${taskId} пользователем ${uploader_id}. Файл:`, file); // Старый лог
+    console.log(`Попытка добавить вложение к задаче ID: ${taskId} (из тела) пользователем ${uploader_id}. Файл:`, file);
 
     if (!uploader_id) {
         // Если файл был загружен, но пользователь не аутентифицирован, удаляем файл
@@ -665,9 +691,10 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
         return;
     }
 
-    if (!taskId) {
+    // if (!taskId) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
         if (file) fs.unlinkSync(file.path);
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса (form-data).' });
         return;
     }
 
@@ -762,17 +789,20 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
 // Функция для получения списка вложений задачи
 export const getTaskAttachments = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { id: taskId } = req.params;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId } = req.body; // Новый способ
 
-    console.log(`Запрос вложений задачи ID: ${taskId} пользователем ${userId}.`);
+    // console.log(`Запрос вложений задачи ID: ${taskId} пользователем ${userId}.`); // Старый лог
+    console.log(`Запрос вложений задачи ID: ${taskId} (из тела) пользователем ${userId}.`);
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+    // if (!taskId) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
 
@@ -829,27 +859,28 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
 
 // Функция для скачивания вложения
 export const downloadTaskAttachment = async (req: Request, res: Response): Promise<void> => {
-     const userId = req.user?.id;
-     const { id: taskId, attachmentId } = req.params;
+     const userId = (req.user as AuthenticatedUser)?.id;
+     const { attachmentId } = req.params; // Оставляем attachmentId из params
 
-     console.log(`Запрос на скачивание вложения ID: ${attachmentId} задачи ${taskId} пользователем ${userId}.`);
+     // console.log(`Запрос на скачивание вложения ID: ${attachmentId} пользователем ${userId}.`);
+     console.log(`Запрос на скачивание вложения ID: ${attachmentId} (из params) пользователем ${userId}.`);
 
-    if (!userId) {
+     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-     if (!taskId || !attachmentId) {
-        res.status(400).json({ error: 'Не указан ID задачи или вложения.' });
+    if (!attachmentId || typeof attachmentId !== 'string') {
+        res.status(400).json({ error: 'Не указан ID вложения (attachmentId) в параметрах URL.' });
         return;
     }
 
     try {
         // 1. Проверяем существование задачи и права доступа (скачивать может создатель или исполнитель)
-         const taskResult = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [taskId]);
+         const taskResult = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [attachmentId]);
         if (taskResult.rows.length === 0) {
             res.status(404).json({ error: 'Задача не найдена.' });
-             console.log(`Попытка скачать вложение ${attachmentId} несуществующей задачи ${taskId} пользователем ${userId}`);
+             console.log(`Попытка скачать вложение ${attachmentId} несуществующей задачи ${attachmentId} пользователем ${userId}`);
             return;
         }
         // const task = taskResult.rows[0];
@@ -860,11 +891,11 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
         // }
 
         // 2. Получаем информацию о файле
-        const fileResult = await pool.query('SELECT file_path, file_name FROM task_attachments WHERE id = $1 AND task_id = $2', [attachmentId, taskId]);
+        const fileResult = await pool.query('SELECT file_path, file_name FROM task_attachments WHERE id = $1 AND task_id = $2', [attachmentId, attachmentId]);
 
         if (fileResult.rows.length === 0) {
             res.status(404).json({ error: 'Вложение не найдено для этой задачи.' });
-            console.log(`Вложение ID ${attachmentId} не найдено для задачи ${taskId}.`);
+            console.log(`Вложение ID ${attachmentId} не найдено для задачи ${attachmentId}.`);
             return;
         }
 
@@ -892,7 +923,7 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
         });
 
     } catch (error: any) {
-        console.error(`Ошибка при скачивании вложения ${attachmentId} задачи ${taskId}:`, error);
+        console.error(`Ошибка при скачивании вложения ${attachmentId} задачи ${attachmentId}:`, error);
         if (error.code === '22P02') { // Invalid UUID format
             res.status(400).json({ error: 'Неверный формат ID задачи или вложения.' });
         } else {
@@ -904,21 +935,27 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
 // Функция для удаления вложения
 export const deleteTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { id: taskId, attachmentId } = req.params;
+    // const { id: taskId, attachmentId } = req.params; // Старый способ
+    const { attachmentId } = req.params; // attachmentId из params
+    // Опционально: можно передавать taskId в теле, если нужно для доп. проверок, но пока не требуется
 
-    console.log(`Попытка удаления вложения ID: ${attachmentId} задачи ${taskId} пользователем ${userId}.`);
+    // console.log(`Попытка удаления вложения ID: ${attachmentId} задачи ${taskId} пользователем ${userId}.`); // Старый лог
+    console.log(`Попытка удаления вложения ID: ${attachmentId} (из params) пользователем ${userId}.`);
 
      if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId || !attachmentId) {
-        res.status(400).json({ error: 'Не указан ID задачи или вложения.' });
+    if (!attachmentId || typeof attachmentId !== 'string') {
+        res.status(400).json({ error: 'Не указан ID вложения (attachmentId) в параметрах URL.' });
         return;
     }
 
     let client: PoolClient | null = null;
+    let filePathToDelete: string | null = null; // Сохраняем путь к файлу для удаления
+    let deletedTaskId: string | null = null; // Объявляем taskId для использования в finally/catch
+
     try {
         client = await pool.connect();
         await client.query('BEGIN');
@@ -926,22 +963,24 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
          // 1. Проверяем существование задачи и права доступа (удалять может создатель или исполнитель)
          //    А также получаем путь к файлу для удаления с диска
          const attachmentResult = await client.query(
-            `SELECT ta.file_path, ta.uploader_id, t.creator_id, t.assignee_id
+            `SELECT ta.file_path, ta.uploader_id, t.creator_id, t.assignee_id, ta.task_id
              FROM task_attachments ta
              JOIN tasks t ON ta.task_id = t.id
-             WHERE ta.id = $1 AND ta.task_id = $2`,
-            [attachmentId, taskId]
+             WHERE ta.id = $1`, // Новый запрос, task_id не нужен здесь для выборки
+            [attachmentId]
         );
 
         if (attachmentResult.rows.length === 0) {
             await client.query('ROLLBACK');
             res.status(404).json({ error: 'Вложение не найдено или не принадлежит указанной задаче.' });
-            console.log(`Попытка удалить несуществующее/неверное вложение ${attachmentId} задачи ${taskId}`);
+            console.log(`Попытка удалить несуществующее/неверное вложение ${attachmentId} задачи ${attachmentId}`);
             client.release();
             return;
         }
 
-        const { file_path, uploader_id, creator_id, assignee_id } = attachmentResult.rows[0];
+        const { file_path, uploader_id, creator_id, assignee_id, task_id } = attachmentResult.rows[0];
+        filePathToDelete = path.resolve(file_path); // Получаем полный путь
+        deletedTaskId = task_id; // Сохраняем ID задачи
 
         // Проверка прав: удалить может загрузивший, создатель задачи или исполнитель задачи
         // if (uploader_id !== userId && creator_id !== userId && assignee_id !== userId) {
@@ -964,41 +1003,37 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
         }
 
         // 3. Удаляем файл с диска
-        const absolutePath = path.resolve(file_path);
         try {
-            if (fs.existsSync(absolutePath)) {
-                fs.unlinkSync(absolutePath);
-                console.log(`Файл вложения удален с диска: ${absolutePath}`);
+            if (fs.existsSync(filePathToDelete)) {
+                fs.unlinkSync(filePathToDelete);
+                console.log(`Файл вложения удален с диска: ${filePathToDelete}`);
             } else {
-                 console.warn(`Файл вложения для удаления не найден на диске: ${absolutePath}`);
+                 console.warn(`Файл вложения для удаления не найден на диске: ${filePathToDelete}`);
             }
         } catch (fsError) {
-            console.error(`Ошибка при удалении файла вложения ${absolutePath} с диска (запись в БД уже удалена):`, fsError);
+            console.error(`Ошибка при удалении файла вложения ${filePathToDelete} с диска (запись в БД уже удалена):`, fsError);
             // Не откатываем транзакцию, т.к. запись в БД уже удалена
         }
 
         await client.query('COMMIT');
 
         // Emit event to the specific task room
-        const eventPayload = {
-            taskId: taskId,
-            attachmentId: attachmentId,
-        };
-        const deleteAttachmentTargetRoom = `task_${taskId}`;
+        const eventPayload = { id: attachmentId, taskId: deletedTaskId };
+        const deleteAttachmentTargetRoom = `task_${deletedTaskId}`;
         // console.log(`[Socket Emit] Event: taskAttachmentDeleted | Target: Room ${deleteAttachmentTargetRoom}`); // Лог внутри сервиса
         // io.to(deleteAttachmentTargetRoom).emit('taskAttachmentDeleted', eventPayload);
         socketService.emitToRoom(deleteAttachmentTargetRoom, 'taskAttachmentDeleted', eventPayload);
-        // console.log(`Event taskAttachmentDeleted emitted for task ${taskId}, attachment ${attachmentId}`);
+        // console.log(`Event taskAttachmentDeleted emitted for task ${task_id}, attachment ${attachmentId}`);
 
-        res.status(200).json({ message: 'Вложение успешно удалено.', taskId, attachmentId });
-        console.log(`Вложение ID ${attachmentId} задачи ${taskId} успешно удалено пользователем ${userId}.`);
+        res.status(200).json({ message: 'Вложение успешно удалено.', taskId: deletedTaskId, attachmentId: attachmentId });
+        console.log(`Вложение ID ${attachmentId} задачи ${deletedTaskId} успешно удалено пользователем ${userId}.`);
 
     } catch (error: any) {
          if (client) {
             await client.query('ROLLBACK');
-             console.error(`Транзакция удаления вложения ${attachmentId} задачи ${taskId} отменена.`);
+             console.error(`Транзакция удаления вложения ${attachmentId} задачи ${deletedTaskId ?? '?'} отменена.`);
         }
-        console.error(`Ошибка при удалении вложения ${attachmentId} задачи ${taskId}:`, error);
+        console.error(`Ошибка при удалении вложения ${attachmentId} задачи ${deletedTaskId ?? '?'}:`, error);
         if (error.code === '22P02') { // Invalid UUID format
             res.status(400).json({ error: 'Неверный формат ID задачи или вложения.' });
         } else {
@@ -1007,7 +1042,7 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
     } finally {
         if (client) {
             client.release();
-             console.log(`Клиент базы данных освобожден после удаления вложения ${attachmentId} задачи ${taskId}.`);
+             console.log(`Клиент базы данных освобожден после удаления вложения ${attachmentId} задачи ${deletedTaskId ?? '?'}.`); // Используем deletedTaskId
         }
     }
 };
@@ -1016,18 +1051,21 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
 
 // Функция для получения логов задачи
 export const getTaskLogs = async (req: Request, res: Response): Promise<void> => {
-    const userId = req.user?.id;
-    const { id: taskId } = req.params;
+    const userId = (req.user as AuthenticatedUser)?.id;
+    // const { id: taskId } = req.params; // Старый способ
+    const { taskId } = req.body; // Новый способ
 
-    console.log(`Запрос логов задачи ID: ${taskId} пользователем ${userId}.`);
+    // console.log(`Запрос логов задачи ID: ${taskId} пользователем ${userId}.`); // Старый лог
+    console.log(`Запрос логов задачи ID: ${taskId} (из тела) пользователем ${userId}.`);
 
-    if (!userId) {
+     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи.' });
+    // if (!taskId) { // Старая проверка
+    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
 
@@ -1078,6 +1116,357 @@ export const getTaskLogs = async (req: Request, res: Response): Promise<void> =>
         } else {
             res.status(500).json({ error: 'Не удалось получить логи задачи' });
         }
+    }
+};
+
+// Новый контроллер для генерации отчета по задачам
+export const generateTaskReport = async (req: Request, res: Response): Promise<void> => {
+    const userId = (req.user as AuthenticatedUser)?.id; // Используем тип
+
+    // 1. Проверка аутентификации
+    if (!userId) {
+        res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
+        return;
+    }
+
+    // 2. Распарсить параметры фильтрации из req.query
+    const { 
+        startDate, endDate, 
+        status, priority, 
+        assigneeId, creatorId, 
+        // Новые фильтры:
+        dueDateStart, dueDateEnd, dueDateFilter, // Фильтры по сроку выполнения
+        updatedBeforeDays // Фильтр для "застрявших" задач
+    } = req.query;
+
+    console.log(`Запрос отчета по задачам от пользователя ${userId} с фильтрами:`, req.query);
+
+    try {
+         // ---- Предварительная обработка фильтров ----
+         const filters: any = {};
+         const queryParams: any[] = [];
+         let paramIndex = 1;
+
+         // Права доступа (пока пользователь видит только те задачи, где он создатель или исполнитель)
+         // TODO: Расширить логику для админов или других ролей, если нужно
+         const accessClause = `(t.creator_id = $${paramIndex} OR t.assignee_id = $${paramIndex})`;
+         queryParams.push(userId);
+         paramIndex++;
+
+         // Фильтр по дате создания
+         if (startDate) {
+             try {
+                 filters.startDate = new Date(startDate as string).toISOString();
+                 queryParams.push(filters.startDate);
+                 filters.startDateClause = `t.created_at >= $${paramIndex++}`;
+             } catch (e) { res.status(400).json({ error: 'Неверный формат startDate (ожидается ISO 8601).' }); return; }
+         }
+         if (endDate) {
+            try {
+                filters.endDate = new Date(endDate as string).toISOString();
+                queryParams.push(filters.endDate);
+                filters.endDateClause = `t.created_at <= $${paramIndex++}`;
+            } catch (e) { res.status(400).json({ error: 'Неверный формат endDate (ожидается ISO 8601).' }); return; }
+         }
+
+         // Фильтр по статусам
+         if (status) {
+              filters.status = (status as string).split(',').map(s => s.trim()).filter(s => s);
+              if (filters.status.length > 0) {
+                  queryParams.push(filters.status);
+                  filters.statusClause = `t.status = ANY($${paramIndex++}::varchar[])`;
+              }
+         }
+         // Фильтр по приоритетам
+         if (priority) {
+             try {
+                filters.priority = (priority as string).split(',').map(p => parseInt(p.trim(), 10)).filter(p => !isNaN(p));
+                if (filters.priority.length > 0) {
+                    queryParams.push(filters.priority);
+                    filters.priorityClause = `t.priority = ANY($${paramIndex++}::integer[])`;
+                }
+            } catch(e) { /* Ignore parsing errors, effectively ignoring the filter */ }
+         }
+
+         // Фильтр по исполнителю
+         let finalAssigneeId = assigneeId;
+         if (assigneeId === 'me') {
+             finalAssigneeId = userId;
+         }
+         if (finalAssigneeId) {
+              filters.assigneeId = finalAssigneeId;
+              queryParams.push(filters.assigneeId);
+              // Обработка случая, когда ищем неназначенные задачи (assigneeId=null или 'null')
+              if (String(finalAssigneeId).toLowerCase() === 'null') {
+                 filters.assigneeIdClause = `t.assignee_id IS NULL`;
+                 queryParams.pop(); // Убираем 'null' из параметров
+              } else {
+                 filters.assigneeIdClause = `t.assignee_id = $${paramIndex++}`;
+              }
+         }
+
+         // Фильтр по создателю
+         let finalCreatorId = creatorId;
+         if (creatorId === 'me') {
+             finalCreatorId = userId;
+         }
+         if (finalCreatorId) {
+              filters.creatorId = finalCreatorId;
+              queryParams.push(filters.creatorId);
+              filters.creatorIdClause = `t.creator_id = $${paramIndex++}`;
+         }
+
+         // --- Новые фильтры --- 
+         // Фильтр по сроку выполнения (due_date)
+          if (dueDateStart) {
+              try {
+                  filters.dueDateStart = new Date(dueDateStart as string).toISOString();
+                  queryParams.push(filters.dueDateStart);
+                  filters.dueDateStartClause = `t.due_date >= $${paramIndex++}`;
+              } catch (e) { res.status(400).json({ error: 'Неверный формат dueDateStart (ожидается ISO 8601).' }); return; }
+          }
+          if (dueDateEnd) {
+              try {
+                  filters.dueDateEnd = new Date(dueDateEnd as string).toISOString();
+                  queryParams.push(filters.dueDateEnd);
+                  filters.dueDateEndClause = `t.due_date <= $${paramIndex++}`;
+              } catch (e) { res.status(400).json({ error: 'Неверный формат dueDateEnd (ожидается ISO 8601).' }); return; }
+          }
+          if (dueDateFilter === 'null') {
+              filters.dueDateNullClause = `t.due_date IS NULL`;
+          } else if (dueDateFilter === 'notnull') {
+              filters.dueDateNotNullClause = `t.due_date IS NOT NULL`;
+          }
+
+          // Фильтр по "застрявшим" задачам (не обновлялись N дней)
+          if (updatedBeforeDays) {
+              try {
+                  const days = parseInt(updatedBeforeDays as string, 10);
+                  if (days > 0) {
+                     filters.updatedBeforeDays = days;
+                     // Вычисляем дату: NOW() - interval 'X days'
+                     queryParams.push(`${days} days`); 
+                     filters.updatedBeforeClause = `t.updated_at < (NOW() - $${paramIndex++}::interval)`;
+                  } else {
+                       console.warn('Некорректное значение для updatedBeforeDays (должно быть > 0), фильтр проигнорирован.');
+                  }
+              } catch (e) { 
+                  console.warn('Некорректный формат updatedBeforeDays (ожидается число), фильтр проигнорирован.');
+              }
+          }
+
+         // Собираем все WHERE условия
+         const whereClauses = [
+             accessClause, // Базовые права доступа
+             filters.startDateClause,
+             filters.endDateClause,
+             filters.statusClause,
+             filters.priorityClause,
+             filters.assigneeIdClause,
+             filters.creatorIdClause,
+             // Новые:
+             filters.dueDateStartClause,
+             filters.dueDateEndClause,
+             filters.dueDateNullClause,
+             filters.dueDateNotNullClause,
+             filters.updatedBeforeClause
+         ].filter(Boolean); // Убираем пустые/null значения
+
+         const whereCondition = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+         // ---- SQL запросы с агрегацией --- Вариант с несколькими запросами --- 
+         const summaryQuery = `
+             SELECT
+                 COUNT(*) AS "totalTasks",
+                 COUNT(*) FILTER (WHERE t.status NOT IN ('done', 'canceled') AND t.due_date < NOW()) AS "overdueTasks",
+                 COUNT(*) FILTER (WHERE t.status = 'done') AS "completedTasks",
+                 COUNT(*) FILTER (WHERE t.status = 'open') AS "openTasks",
+                 COUNT(*) FILTER (WHERE t.status = 'in_progress') AS "inProgressTasks",
+                 ${filters.updatedBeforeClause ? `COUNT(*) FILTER (WHERE ${filters.updatedBeforeClause.replace('t.updated_at < (NOW() - $'+(queryParams.findIndex((p, i) => typeof p === 'string' && p.endsWith(' days')) + 1)+'::interval)', 't.updated_at < (NOW() - $'+(queryParams.findIndex((p, i) => typeof p === 'string' && p.endsWith(' days')) + 1)+')')}) AS "staleTasks"` : '0 AS "staleTasks"'},
+                 -- Новые счетчики характеристик
+                 COUNT(DISTINCT t.id) FILTER (WHERE EXISTS (SELECT 1 FROM task_attachments ta WHERE ta.task_id = t.id)) AS "tasksWithAttachments",
+                 COUNT(DISTINCT t.id) FILTER (WHERE EXISTS (SELECT 1 FROM task_comments tc WHERE tc.task_id = t.id)) AS "tasksWithComments"
+             FROM tasks t
+              ${whereCondition};
+         `;
+
+          const statusDistQuery = `
+              SELECT t.status, COUNT(*) as count
+              FROM tasks t
+              ${whereCondition}
+              GROUP BY t.status; 
+          `;
+
+          const priorityDistQuery = `
+              SELECT 
+                  t.priority, 
+                  COUNT(*) as count,
+                  -- Добавляем счетчик просроченных для каждого приоритета
+                  COUNT(*) FILTER (WHERE t.status NOT IN ('done', 'canceled') AND t.due_date < NOW()) as "overdueCount"
+              FROM tasks t
+              ${whereCondition}
+              GROUP BY t.priority;
+          `;
+
+           const assigneeDistQuery = `
+               SELECT
+                   t.assignee_id AS "assigneeId",
+                   COALESCE(assignee.username, 'Не назначен') AS "assigneeUsername",
+                   COUNT(*) as count,
+                   COUNT(*) FILTER (WHERE t.status IN ('open', 'in_progress')) as "activeCount",
+                   -- Добавляем завершенные и просроченные
+                   COUNT(*) FILTER (WHERE t.status = 'done') as "completedCount",
+                   COUNT(*) FILTER (WHERE t.status NOT IN ('done', 'canceled') AND t.due_date < NOW()) as "overdueCount"
+               FROM tasks t
+               LEFT JOIN users assignee ON t.assignee_id = assignee.id
+               ${whereCondition}
+               GROUP BY t.assignee_id, assignee.username
+               ORDER BY count DESC NULLS LAST;
+           `;
+
+           const creatorDistQuery = `
+                SELECT
+                    t.creator_id AS "creatorId",
+                    COALESCE(creator.username, 'Неизвестно') AS "creatorUsername",
+                    COUNT(*) as count,
+                    -- Добавляем завершенные и просроченные
+                    COUNT(*) FILTER (WHERE t.status = 'done') as "completedCount",
+                    COUNT(*) FILTER (WHERE t.status NOT IN ('done', 'canceled') AND t.due_date < NOW()) as "overdueCount"
+                FROM tasks t
+                LEFT JOIN users creator ON t.creator_id = creator.id
+                ${whereCondition}
+                GROUP BY t.creator_id, creator.username
+                ORDER BY count DESC NULLS LAST;
+            `;
+
+          // Выполняем запросы параллельно
+          const [
+              summaryResult,
+              statusDistResult,
+              priorityDistResult,
+              assigneeDistResult,
+              creatorDistResult
+          ] = await Promise.all([
+              pool.query(summaryQuery, queryParams),
+              pool.query(statusDistQuery, queryParams),
+              pool.query(priorityDistQuery, queryParams),
+              pool.query(assigneeDistQuery, queryParams),
+              pool.query(creatorDistQuery, queryParams)
+          ]);
+
+          // Обрабатываем результаты
+          const summaryStats = summaryResult.rows[0] || { totalTasks: 0, overdueTasks: 0, completedTasks: 0, openTasks: 0, inProgressTasks: 0, staleTasks: 0, tasksWithAttachments: 0, tasksWithComments: 0 }; // Добавлены новые поля
+          // Преобразуем числа из строк в числа
+          summaryStats.totalTasks = parseInt(summaryStats.totalTasks || '0', 10);
+          summaryStats.overdueTasks = parseInt(summaryStats.overdueTasks || '0', 10);
+          summaryStats.completedTasks = parseInt(summaryStats.completedTasks || '0', 10);
+          summaryStats.openTasks = parseInt(summaryStats.openTasks || '0', 10);
+          summaryStats.inProgressTasks = parseInt(summaryStats.inProgressTasks || '0', 10);
+          summaryStats.staleTasks = parseInt(summaryStats.staleTasks || '0', 10);
+          summaryStats.tasksWithAttachments = parseInt(summaryStats.tasksWithAttachments || '0', 10); // Новое поле
+          summaryStats.tasksWithComments = parseInt(summaryStats.tasksWithComments || '0', 10); // Новое поле
+
+
+          const distributionByStatus: { [key: string]: number } = {};
+          statusDistResult.rows.forEach(row => {
+              if(row.status) distributionByStatus[row.status] = parseInt(row.count, 10);
+          });
+
+          const distributionByPriority: Array<{ priority: number | null, count: number, overdueCount: number }> = []; // Обновлен тип
+          priorityDistResult.rows.forEach(row => {
+               if(row.priority !== null) { 
+                  distributionByPriority.push({
+                      priority: row.priority,
+                      count: parseInt(row.count, 10),
+                      overdueCount: parseInt(row.overdueCount || '0', 10) // Обработка overdueCount
+                  });
+              }
+          });
+          // Сортируем по приоритету для консистентности
+          distributionByPriority.sort((a, b) => (a.priority ?? Infinity) - (b.priority ?? Infinity)); 
+
+          const distributionByAssignee: Array<{ 
+              assigneeId: string | null, 
+              assigneeUsername: string | null, 
+              count: number, 
+              activeCount: number, 
+              completedCount: number, // Новое поле
+              overduePercentage: number // Новое поле
+            }> = assigneeDistResult.rows.map(row => {
+                const count = parseInt(row.count, 10);
+                const overdueCount = parseInt(row.overdueCount || '0', 10);
+                const overduePercentage = count > 0 ? Math.round((overdueCount / count) * 100) : 0;
+                return {
+                   assigneeId: row.assigneeId,
+                   assigneeUsername: row.assigneeUsername,
+                   count: count,
+                   activeCount: parseInt(row.activeCount || '0', 10),
+                   completedCount: parseInt(row.completedCount || '0', 10), // Новое поле
+                   overduePercentage: overduePercentage // Новое поле
+               };
+          });
+
+           const distributionByCreator: Array<{ 
+               creatorId: string | null, 
+               creatorUsername: string | null, 
+               count: number, 
+               completedCount: number, // Новое поле
+               overduePercentage: number // Новое поле
+            }> = creatorDistResult.rows.map(row => {
+                const count = parseInt(row.count, 10);
+                const overdueCount = parseInt(row.overdueCount || '0', 10);
+                const overduePercentage = count > 0 ? Math.round((overdueCount / count) * 100) : 0;
+                return {
+                   creatorId: row.creatorId,
+                   creatorUsername: row.creatorUsername,
+                   count: count,
+                   completedCount: parseInt(row.completedCount || '0', 10), // Новое поле
+                   overduePercentage: overduePercentage // Новое поле
+               };
+           });
+
+
+         // 4. Собрать JSON ответ
+         const report = {
+             reportMetadata: {
+                 generatedAt: new Date().toISOString(),
+                 filtersApplied: {
+                     startDate: startDate || null,
+                     endDate: endDate || null,
+                     status: status ? (status as string).split(',').map(s=>s.trim()) : null,
+                     priority: priority ? (priority as string).split(',').map(p => parseInt(p.trim(), 10)).filter(p=>!isNaN(p)) : null,
+                     assigneeId: assigneeId || null, // Отображаем исходный фильтр (может быть 'me' или 'null')
+                     creatorId: creatorId || null,   // Отображаем исходный фильтр (может быть 'me')
+                     // Новые фильтры:
+                     dueDateStart: dueDateStart || null,
+                     dueDateEnd: dueDateEnd || null,
+                     dueDateFilter: dueDateFilter || null,
+                     updatedBeforeDays: updatedBeforeDays ? parseInt(updatedBeforeDays as string, 10) : null
+                 }
+             },
+             summaryStats,
+             distribution: {
+                 byStatus: distributionByStatus,
+                 byPriority: distributionByPriority,
+                 byAssignee: distributionByAssignee,
+                 byCreator: distributionByCreator
+             },
+             // TODO (V2): Добавить timeMetrics
+             timeMetrics: null
+         };
+
+         res.status(200).json(report);
+
+    } catch (error: any) {
+        console.error('Ошибка при генерации отчета по задачам:', error);
+         // Обработка ошибок дат
+         if (error.message.includes('invalid input syntax for type timestamp')) {
+              res.status(400).json({ error: 'Неверный формат даты (ожидается ISO 8601).' });
+         } else if (error.code === '22P02') { // Ошибка синтаксиса для числа/uuid
+             res.status(400).json({ error: 'Неверный формат одного из фильтров (например, priority, assigneeId, creatorId).' });
+         } else {
+             res.status(500).json({ error: 'Не удалось сгенерировать отчет по задачам' });
+         }
     }
 };
 
