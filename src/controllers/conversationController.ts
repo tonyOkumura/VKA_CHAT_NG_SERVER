@@ -509,12 +509,17 @@ export const fetchAllParticipantsByConversationIdForMessages = async (conversati
     }
 };
 
-// Функция для отметки чата как прочитанного/непрочитанного (Вариант 2 из ТЗ)
+// Функция для отметки чата как прочитанного/непрочитанного (Новая логика с message_reads)
 export const markConversationReadUnread = async (req: Request, res: Response) => {
-    const { conversationId } = req.params;
-    const { mark_as_unread } = req.body; // boolean
+    // Получаем conversationId из ТЕЛА запроса
+    const { conversationId, mark_as_unread } = req.body; // boolean
     const userId = (req.user as AuthenticatedUser).id;
 
+    // Валидация conversationId из тела
+    if (!conversationId || typeof conversationId !== 'string') {
+        res.status(400).json({ error: 'Необходимо указать conversationId в теле запроса' });
+        return;
+    }
     if (typeof mark_as_unread !== 'boolean') {
         res.status(400).json({ error: 'Необходимо указать поле mark_as_unread (true/false)' });
         return;
@@ -522,82 +527,100 @@ export const markConversationReadUnread = async (req: Request, res: Response) =>
 
     console.log(`User ${userId} marking conversation ${conversationId} as ${mark_as_unread ? 'unread' : 'read'}`);
 
+    const client = await pool.connect(); // Используем клиент для транзакции (если понадобится)
+
     try {
-        let newTimestamp: Date | string | null = null;
-        let estimatedUnreadCount: number | null = null;
+        // 0. Проверяем, является ли пользователь участником
+        const participantCheck = await client.query(
+            'SELECT 1 FROM conversation_participants WHERE user_id = $1 AND conversation_id = $2',
+            [userId, conversationId]
+        );
+        if (participantCheck.rowCount === 0) {
+            res.status(404).json({ error: 'Чат не найден или вы не являетесь участником' });
+            return;
+        }
 
         if (mark_as_unread === false) { // Пометить как прочитанный
-            // Устанавливаем текущее время как время последнего прочтения
-            newTimestamp = new Date();
-            estimatedUnreadCount = 0;
+            // 1. Найти все ID сообщений в чате, отправленные не текущим пользователем
+            const messagesToRead = await client.query(
+                `SELECT id FROM messages WHERE conversation_id = $1 AND sender_id != $2`,
+                [conversationId, userId]
+            );
+            const messageIdsToRead = messagesToRead.rows.map(row => row.id);
+
+            // 2. Добавить записи в message_reads для всех этих сообщений
+            if (messageIdsToRead.length > 0) {
+                const values = messageIdsToRead.map(id => `('${id}', '${userId}', NOW())`).join(',');
+                await client.query(
+                    `INSERT INTO message_reads (message_id, user_id, read_at) VALUES ${values}
+                     ON CONFLICT (message_id, user_id) DO NOTHING`
+                );
+                 console.log(`Marked ${messageIdsToRead.length} messages as read for user ${userId} in conv ${conversationId}`);
+            }
+
         } else { // Пометить как непрочитанный
-            // Найдем время ПРЕДПОСЛЕДНЕГО сообщения или чуть раньше последнего
-             const lastMessageRes = await pool.query(
-                 `SELECT created_at
-                  FROM messages
-                  WHERE conversation_id = $1
-                  ORDER BY created_at DESC
-                  LIMIT 1 OFFSET 1`, // Берем второе сообщение с конца
-                 [conversationId]
-             );
-
-             if (lastMessageRes.rowCount !== null && lastMessageRes.rowCount > 0) {
-                 // Устанавливаем время прочтения на момент предпоследнего сообщения
-                 newTimestamp = lastMessageRes.rows[0].created_at;
-             } else {
-                  // Если есть только одно сообщение или ни одного, делаем timestamp NULL
-                  // или можно установить timestamp очень старый
-                  newTimestamp = null; // Помечаем как "не читал совсем"
-             }
-            estimatedUnreadCount = 1; // Предполагаем, что как минимум 1 сообщение будет непрочитано
+            // 1. Удалить все записи о прочтении для пользователя в этом чате
+            const deleteResult = await client.query(
+                `DELETE FROM message_reads
+                 WHERE user_id = $1 AND message_id IN (SELECT id FROM messages WHERE conversation_id = $2)`,
+                [userId, conversationId]
+            );
+             console.log(`Marked conversation ${conversationId} as unread for user ${userId}. Deleted ${deleteResult.rowCount} read records.`);
         }
 
-        // Обновляем last_read_timestamp для участника
-        const updateResult = await pool.query(
-            `UPDATE conversation_participants
-             SET last_read_timestamp = $1
-             WHERE conversation_id = $2 AND user_id = $3`,
-            [newTimestamp, conversationId, userId]
+        // 3. Пересчитать актуальное количество непрочитанных сообщений
+        const unreadCountResult = await client.query(
+             `SELECT COUNT(*)
+              FROM messages m
+              LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = $1
+              WHERE m.conversation_id = $2 AND m.sender_id != $1 AND mr.message_id IS NULL`,
+             [userId, conversationId]
+         );
+        const actualUnreadCount = parseInt(unreadCountResult.rows[0].count, 10);
+
+        // 4. Получить текущий статус is_muted
+        const muteStatusResult = await client.query(
+            `SELECT is_muted FROM conversation_participants WHERE conversation_id = $1 AND user_id = $2`,
+            [conversationId, userId]
         );
+        const currentMuteStatus = muteStatusResult.rows[0]?.is_muted ?? false; // Default to false if somehow not found
 
-        if (updateResult.rowCount === 0) {
-            // Возможно, пользователь не участник этого чата
-             console.warn(`User ${userId} not found in conversation ${conversationId} or conversation does not exist.`);
-             // Можно вернуть 404 или 403
-             res.status(404).json({ error: 'Чат не найден или вы не являетесь участником' });
-             return;
-        }
-
-        // Отправляем событие conversationUpdated пользователю
-        // Здесь мы отправляем предполагаемое количество непрочитанных,
-        // клиенту может потребоваться пересчитать точное значение при получении
+        // 5. Отправить событие conversationUpdated пользователю с актуальными данными
         const updatePayload = {
              id: conversationId,
-             // unread_count: estimatedUnreadCount // Раскомментировать, если клиент ожидает это поле
-             // Можно также передать last_read_timestamp, если клиенту это нужно
-             last_read_timestamp: newTimestamp ? (newTimestamp instanceof Date ? newTimestamp.toISOString() : new Date(newTimestamp).toISOString()) : null
-         };
+             unread_count: actualUnreadCount, // Отправляем актуальный счетчик
+             is_muted: currentMuteStatus
+             // last_read_timestamp больше не используется здесь
+        };
         socketService.emitToUser(userId, 'conversationUpdated', updatePayload);
-        console.log(`Sent conversationUpdated to user ${userId} for conversation ${conversationId}`);
+        console.log(`Sent conversationUpdated to user ${userId} for conversation ${conversationId} with unread_count: ${actualUnreadCount}`);
 
-        // В ответе возвращаем estimatedUnreadCount или просто OK
+        // 6. Вернуть актуальный статус в ответе API
         res.status(200).json({
             id: conversationId,
-            // unread_count: estimatedUnreadCount // Если клиент ожидает это
+            unread_count: actualUnreadCount,
+            is_muted: currentMuteStatus
         });
 
     } catch (error) {
         console.error(`Error marking conversation ${conversationId} read/unread for user ${userId}:`, error);
-        res.status(500).json({ error: 'Ошибка сервера' });
+        res.status(500).json({ error: 'Ошибка сервера при обновлении статуса прочтения чата' });
+    } finally {
+        client.release(); // Всегда освобождаем клиент
     }
 };
 
 // Функция для включения/выключения уведомлений (Mute)
 export const muteConversation = async (req: Request, res: Response) => {
-    const { conversationId } = req.params;
-    const { is_muted } = req.body; // boolean
+    // Получаем conversationId из ТЕЛА запроса
+    const { conversationId, is_muted } = req.body; // boolean
     const userId = (req.user as AuthenticatedUser).id;
 
+    // Валидация conversationId из тела
+    if (!conversationId || typeof conversationId !== 'string') {
+        res.status(400).json({ error: 'Необходимо указать conversationId в теле запроса' });
+        return;
+    }
     if (typeof is_muted !== 'boolean') {
         res.status(400).json({ error: 'Необходимо указать поле is_muted (true/false)' });
         return;
@@ -642,12 +665,22 @@ export const muteConversation = async (req: Request, res: Response) => {
 
 // Функция для выхода из группы или удаления диалога
 export const leaveOrDeleteConversation = async (req: Request, res: Response) => {
-    const { conversationId } = req.params;
+    // Получаем conversationId из ТЕЛА запроса
+    const { conversationId } = req.body;
     const userId = (req.user as AuthenticatedUser).id;
-    // Определяем, это выход из группы или удаление чата
-    const isLeavingGroup = req.path.includes('/participants/me');
 
-    console.log(`User ${userId} attempting to ${isLeavingGroup ? 'leave' : 'delete'} conversation ${conversationId}`);
+    // Валидация conversationId из тела
+    if (!conversationId || typeof conversationId !== 'string') {
+        res.status(400).json({ error: 'Необходимо указать conversationId в теле запроса' });
+        return;
+    }
+
+    // Определяем, это выход из группы или удаление чата по пути роутера
+    // req.path для /leave будет '/leave', для /delete будет '/delete'
+    const isLeavingGroup = req.path.endsWith('/leave');
+    const isDeletingConversation = req.path.endsWith('/delete');
+
+    console.log(`User ${userId} attempting to ${isLeavingGroup ? 'leave' : (isDeletingConversation ? 'delete' : 'unknown action on')} conversation ${conversationId} (from body)`);
 
     try {
         // Проверяем существование чата и является ли пользователь участником
@@ -725,7 +758,7 @@ export const leaveOrDeleteConversation = async (req: Request, res: Response) => 
         res.status(204).send();
 
     } catch (error) {
-        console.error(`Error during ${isLeavingGroup ? 'leaving' : 'deleting'} conversation ${conversationId} for user ${userId}:`, error);
+        console.error(`Error during ${isLeavingGroup ? 'leaving' : (isDeletingConversation ? 'deleting' : 'unknown action on')} conversation ${conversationId} for user ${userId}:`, error);
         res.status(500).json({ error: 'Ошибка сервера' });
     }
 };

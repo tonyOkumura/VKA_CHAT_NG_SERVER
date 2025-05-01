@@ -32,9 +32,9 @@ router.patch('/details', verifyToken, updateConversationName);
 router.get('/participants', verifyToken, fetchAllParticipantsByConversationId);
 
 router.post('/pin/toggle', verifyToken, togglePinMessage);
-router.post('/:conversationId/read', verifyToken, markConversationReadUnread);
-router.patch('/:conversationId/mute', verifyToken, muteConversation);
-router.delete('/:conversationId/participants/me', verifyToken, leaveOrDeleteConversation);
-router.delete('/:conversationId', verifyToken, leaveOrDeleteConversation);
+router.post('/read', verifyToken, markConversationReadUnread);
+router.patch('/mute', verifyToken, muteConversation);
+router.delete('/leave', verifyToken, leaveOrDeleteConversation);
+router.delete('/delete', verifyToken, leaveOrDeleteConversation);
 
 export default router;

@@ -50,6 +50,19 @@ CREATE TABLE messages (
     original_message_id UUID REFERENCES messages(id) ON DELETE SET NULL
 );
 
+-- Изменяем ограничение внешнего ключа для messages.conversation_id
+-- Сначала удаляем существующее ограничение (если оно есть и названо стандартно)
+ALTER TABLE messages
+DROP CONSTRAINT IF EXISTS messages_conversation_id_fkey;
+
+-- Затем добавляем его снова с опцией ON DELETE CASCADE
+-- ВАЖНО: Убедитесь, что имя ограничения 'messages_conversation_id_fkey' соответствует вашему, если оно другое.
+ALTER TABLE messages
+ADD CONSTRAINT messages_conversation_id_fkey
+FOREIGN KEY (conversation_id)
+REFERENCES conversations(id)
+ON DELETE CASCADE;
+
 -- Таблица message_reads: отслеживает, кто именно прочитал сообщение.
 -- Теперь используется в основном для отображения статуса конкретных сообщений (две галочки),
 -- а не для подсчета непрочитанных в списке чатов.
