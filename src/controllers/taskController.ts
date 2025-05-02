@@ -747,12 +747,15 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
             task_id: newAttachment.task_id,
             file_name: newAttachment.file_name,
             file_type: newAttachment.file_type,
-            file_size: newAttachment.file_size,
-            upload_date: new Date(newAttachment.created_at).toISOString(), // Use created_at as upload_date
-            uploaded_by: newAttachment.uploader_id,
+            // file_size: newAttachment.file_size, // Старое поле
+            file_size_bytes: newAttachment.file_size, // Новое поле
+            // upload_date: new Date(newAttachment.created_at).toISOString(), // Старое поле
+            uploaded_at: new Date(newAttachment.created_at).toISOString(), // Новое поле
+            // uploaded_by: newAttachment.uploader_id, // Старое поле
+            uploaded_by_id: newAttachment.uploader_id, // Новое поле
             uploaded_by_username: uploaderDetails.username,
-            // Construct download URL (adjust path as needed)
-            download_url: `/tasks/${taskId}/attachments/${newAttachment.id}/download`
+            // Убираем download_url, так как клиент его формирует сам
+            // download_url: `/tasks/${taskId}/attachments/${newAttachment.id}/download` 
         };
         const attachmentTargetRoom = `task_${taskId}`;
         // console.log(`[Socket Emit] Event: newTaskAttachment | Target: Room ${attachmentTargetRoom}`); // Лог внутри сервиса
@@ -837,11 +840,15 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
             task_id: att.task_id,
             file_name: att.file_name,
             file_type: att.file_type,
-            file_size: att.file_size,
-            upload_date: new Date(att.created_at).toISOString(),
-            uploaded_by: att.uploader_id,
+            // file_size: att.file_size, // Старое поле
+            file_size_bytes: att.file_size, // Новое поле
+            // upload_date: new Date(att.created_at).toISOString(), // Старое поле
+            uploaded_at: new Date(att.created_at).toISOString(), // Новое поле
+            // uploaded_by: att.uploader_id, // Старое поле
+            uploaded_by_id: att.uploader_id, // Новое поле
             uploaded_by_username: att.uploaded_by_username,
-            download_url: `/tasks/${taskId}/attachments/${att.id}/download`
+            // Убираем download_url
+            // download_url: `/tasks/${taskId}/attachments/${att.id}/download`
         }));
 
         res.status(200).json(attachmentsWithDetails);
@@ -1049,6 +1056,16 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
 
 // --- Логи изменений задач ---
 
+// Функция для маппинга action в field_changed
+const mapActionToFieldChanged = (action: string): string | null => {
+    if (action.startsWith('update_')) {
+        return action.substring(7); // Возвращаем имя поля после 'update_'
+    }
+    // Можно добавить обработку других типов action, если нужно
+    // Например, 'create_task', 'add_comment', 'delete_attachment' и т.д.
+    return action; // Возвращаем сам action если это не обновление поля
+};
+
 // Функция для получения логов задачи
 export const getTaskLogs = async (req: Request, res: Response): Promise<void> => {
     const userId = (req.user as AuthenticatedUser)?.id;
@@ -1096,14 +1113,19 @@ export const getTaskLogs = async (req: Request, res: Response): Promise<void> =>
 
         // Ensure dates are in ISO 8601 format and log_id field is present
         const logsWithDetails = logsResult.rows.map(log => ({
-            log_id: log.id, // Map database id to log_id
+            // log_id: log.id, // Старое поле
+            logId: log.id, // Новое поле - соответствует LogEntryModel
             task_id: log.task_id,
-            action: log.action,
+            action: log.action, // Оставляем оригинальный action
+            field_changed: mapActionToFieldChanged(log.action), // Новое поле
             old_value: log.old_value,
             new_value: log.new_value,
-            changed_by: log.changed_by,
-            changed_by_username: log.changed_by_username,
-            changed_at: new Date(log.changed_at).toISOString(),
+            // changed_by: log.changed_by, // Старое поле
+            user_id: log.changed_by, // Новое поле - соответствует LogEntryModel
+            // changed_by_username: log.changed_by_username, // Старое поле
+            username: log.changed_by_username, // Новое поле - соответствует LogEntryModel
+            // changed_at: new Date(log.changed_at).toISOString(), // Старое поле
+            timestamp: new Date(log.changed_at).toISOString(), // Новое поле - соответствует LogEntryModel
         }));
 
         res.status(200).json(logsWithDetails);
@@ -1451,8 +1473,8 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
                  byAssignee: distributionByAssignee,
                  byCreator: distributionByCreator
              },
-             // TODO (V2): Добавить timeMetrics
-             timeMetrics: null
+             // Оставляем timeMetrics как null, так как его реализация не требуется
+             timeMetrics: null 
          };
 
          res.status(200).json(report);

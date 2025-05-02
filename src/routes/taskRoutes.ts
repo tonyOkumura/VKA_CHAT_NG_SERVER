@@ -12,7 +12,10 @@ import {
     getTaskComments,
     addTaskAttachment,
     getTaskAttachments,
-    getTaskLogs // Добавляем getTaskLogs
+    deleteTaskAttachment,
+    downloadTaskAttachment,
+    getTaskLogs,
+    generateTaskReport
 } from '../controllers/taskController';
 
 const router = Router();
@@ -20,24 +23,27 @@ const router = Router();
 // Middleware для проверки аутентификации будет применяться ко всем роутам задач
 router.use(verifyToken);
 
-// --- Задачи ---
+// --- Задачи (Tasks) ---
 router.post('/', createTask);
 router.get('/', getTasks);
-router.get('/:id', getTaskById);
-router.put('/:id', updateTask);
-router.delete('/:id', deleteTask);
+router.post('/get', getTaskById);
+router.put('/update', updateTask);
+router.delete('/delete', deleteTask);
 
-// --- Комментарии к задачам ---
-router.post('/:id/comments', addTaskComment); // Роут для добавления комментария
-router.get('/:id/comments', getTaskComments);  // Роут для получения комментариев
+// --- Комментарии к задачам (Comments) ---
+router.post('/comments/add', addTaskComment);
+router.post('/comments/get', getTaskComments);
 
-// --- Вложения к задачам ---
-// Применяем middleware uploadTaskAttachment только к роуту POST /:id/attachments
-router.post('/:id/attachments', uploadTaskAttachment, addTaskAttachment);
-router.get('/:id/attachments', getTaskAttachments);
+// --- Вложения к задачам (Attachments) ---
+router.post('/attachments/add', uploadTaskAttachment, addTaskAttachment);
+router.post('/attachments/get', getTaskAttachments);
+router.delete('/attachments/:attachmentId/delete', deleteTaskAttachment);
+router.get('/attachments/:attachmentId/download', downloadTaskAttachment);
 
-// --- Логи изменений задач ---
-router.get('/:id/logs', getTaskLogs); // Роут для получения логов
+// --- Логи изменений задач (Logs) ---
+router.post('/logs/get', getTaskLogs);
 
+// --- Отчеты (Reports) ---
+router.get('/report', generateTaskReport);
 
 export default router; 
