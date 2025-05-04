@@ -1,6 +1,11 @@
 import { Request, Response } from 'express';
 import pool from '../models/db';
 
+// Remove SERVER_BASE_URL and getAbsoluteUrl
+// const HOST = process.env.HOST || 'localhost';
+// const PORT = process.env.PORT || 6000;
+// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
+
 export const updateUserOnlineStatus = async (userId: string, isOnline: boolean): Promise<void> => {
     try {
         await pool.query(
@@ -22,14 +27,23 @@ export const getAllUsers = async (req: Request, res: Response): Promise<any> => 
     console.log(`Fetching all users.`);
 
     try {
-        // Выбираем только нужные поля, исключая пароль, и переименовываем id в user_id
+        // Выбираем поля пользователя и добавляем avatarUrl через LEFT JOIN
         const result = await pool.query(
-            `SELECT id as user_id, username, email, is_online, created_at, updated_at 
-             FROM users 
-             ORDER BY username ASC`
+            `SELECT 
+                u.id as user_id, 
+                u.username, 
+                u.email, 
+                u.is_online, 
+                u.created_at, 
+                u.updated_at,
+                ua.file_path AS "avatarPath" -- Get the relative path
+             FROM users u
+             LEFT JOIN user_avatars ua ON u.id = ua.user_id
+             ORDER BY u.username ASC`
         );
 
         console.log(`All users fetched successfully.`);
+        // Return the rows directly, avatarPath is already selected
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching all users:', error);

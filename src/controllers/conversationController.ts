@@ -2,6 +2,18 @@ import { json } from "stream/consumers";
 import pool from "../models/db";
 import { Request, Response } from "express";
 import * as socketService from '../services/socketService';
+import path from 'path';
+import fs from 'fs';
+
+// Remove SERVER_BASE_URL and getAbsoluteUrl
+// const HOST = process.env.HOST || 'localhost';
+// const PORT = process.env.PORT || 6000;
+// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
+
+// Function to construct absolute URL from relative path - REMOVED
+// const getAbsoluteUrl = (relativePath: string | null): string | null => {
+//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
+// };
 
 // Тип для данных из req.user
 interface AuthenticatedUser {
@@ -31,6 +43,88 @@ const fetchPinnedMessageIds = async (conversationId: string): Promise<string[]> 
         return []; // Return empty array on error
     }
 };
+
+// --- NEW HELPER --- Fetch full conversation details (returns absolute URLs)
+const fetchFullConversationDetails = async (conversationId: string): Promise<any | null> => {
+    console.log(`Fetching full details for conversation: ${conversationId}`);
+    try {
+        const result = await pool.query(
+            `
+            WITH participants_info AS (
+                SELECT
+                    cp.conversation_id,
+                    json_agg(
+                        json_build_object(
+                            'user_id', u.id,
+                            'username', u.username,
+                            'email', u.email,
+                            'is_online', u.is_online,
+                            'avatarPath', ua.file_path -- Participant relative avatar path
+                        ) ORDER BY u.username
+                    ) AS participants
+                FROM conversation_participants cp
+                JOIN users u ON u.id = cp.user_id
+                LEFT JOIN user_avatars ua ON u.id = ua.user_id
+                WHERE cp.conversation_id = $1
+                GROUP BY cp.conversation_id
+            ),
+            admin_details AS (
+                SELECT
+                    u.id as admin_id,
+                    u.username as admin_username,
+                    ua.file_path as "adminAvatarPath" -- Admin relative avatar path
+                FROM users u
+                LEFT JOIN user_avatars ua ON u.id = ua.user_id
+                WHERE u.id = (SELECT admin_id FROM conversations WHERE id = $1)
+            )
+            SELECT
+                c.id AS conversation_id,
+                CASE
+                    WHEN c.is_group_chat THEN c.name
+                    WHEN NOT c.is_group_chat THEN (
+                        SELECT u_dialog.username FROM conversation_participants cp_dialog JOIN users u_dialog ON u_dialog.id = cp_dialog.user_id WHERE cp_dialog.conversation_id = c.id AND cp_dialog.user_id != c.admin_id LIMIT 1
+                    )
+                    ELSE c.name
+                END AS conversation_name,
+                c.is_group_chat,
+                c.name AS group_name,
+                c.avatar_path AS "groupAvatarPath", -- Group relative avatar path
+                ad.admin_id,
+                ad.admin_username,
+                ad."adminAvatarPath",
+                COALESCE(pi.participants, '[]'::json) AS participants,
+                c.created_at::text AS conversation_created_at,
+                (SELECT COALESCE(array_agg(pm.message_id ORDER BY pm.pinned_at DESC), '{}'::uuid[]) FROM pinned_messages pm WHERE pm.conversation_id = c.id) AS pinned_message_ids
+            FROM conversations c
+            LEFT JOIN participants_info pi ON pi.conversation_id = c.id
+            LEFT JOIN admin_details ad ON true
+            WHERE c.id = $1;
+            `,
+            [conversationId]
+        );
+        if (result.rowCount === 0) { return null; }
+
+        const conversationDetails = result.rows[0];
+        // Format and construct absolute URLs -> NO LONGER NEEDED
+        const formattedDetails = {
+            ...conversationDetails,
+            conversation_created_at: new Date(conversationDetails.conversation_created_at).toISOString(),
+            // Return participants directly with avatarPath
+            // participants: conversationDetails.participants?.map((p: any) => ({ ...p, avatarUrl: getAbsoluteUrl(p.avatarPath), avatarPath: undefined })) || [],
+            // Return relative paths directly
+            // groupAvatarUrl: getAbsoluteUrl(conversationDetails.groupAvatarPath),
+            // adminAvatarUrl: getAbsoluteUrl(conversationDetails.adminAvatarPath),
+            // groupAvatarPath: undefined, // Keep original path
+            // adminAvatarPath: undefined // Keep original path
+        };
+        // Return raw details with relative paths
+        return formattedDetails; // Note: field names are already groupAvatarPath, adminAvatarPath, participants (with avatarPath inside)
+    } catch (error) {
+        console.error(`Error fetching full conversation details for ${conversationId}:`, error);
+        return null;
+    }
+};
+// --- END NEW HELPER ---
 
 export const fetchAllConversationsByUserId = async (req: Request, res: Response) => {
     let userId: string | null = null;
@@ -64,17 +158,18 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                 FROM conversations c
             ),
             last_messages AS (
-                SELECT DISTINCT ON (conversation_id)
-                    conversation_id,
-                    content,
-                    created_at,
-                    sender_id,
-                    sender_username,
-                    -- Include forwarding info for last message preview if needed
-                    is_forwarded,
-                    forwarded_from_username
-                FROM messages
-                ORDER BY conversation_id, created_at DESC
+                SELECT DISTINCT ON (m.conversation_id)
+                    m.conversation_id,
+                    m.content,
+                    m.created_at,
+                    m.sender_id,
+                    m.sender_username,
+                    sender_avatar.file_path AS sender_avatar_path, -- Get relative path
+                    m.is_forwarded,
+                    m.forwarded_from_username
+                FROM messages m
+                LEFT JOIN user_avatars sender_avatar ON m.sender_id = sender_avatar.user_id
+                ORDER BY m.conversation_id, m.created_at DESC
             ),
             participants_info AS (
                 SELECT
@@ -84,28 +179,26 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                             'user_id', u.id,
                             'username', u.username,
                             'email', u.email,
-                            'is_online', u.is_online
+                            'is_online', u.is_online,
+                            'avatarPath', COALESCE(ua.file_path, NULL) -- Added participant avatarPath
                         ) ORDER BY u.username
                     ) AS participants
                 FROM conversation_participants cp
                 JOIN users u ON u.id = cp.user_id
+                LEFT JOIN user_avatars ua ON u.id = ua.user_id -- Join for participant avatars
                 GROUP BY cp.conversation_id
             ),
             unread_counts AS (
-                -- Existing unread count logic (based on last_read_timestamp)
-                -- Consider if this needs adjustment with message reads table
                 SELECT
                     m.conversation_id,
                     COUNT(m.id) AS unread_count
                 FROM messages m
                 JOIN conversation_participants cp ON m.conversation_id = cp.conversation_id AND cp.user_id = $1
                 LEFT JOIN message_reads mr ON mr.message_id = m.id AND mr.user_id = cp.user_id
-                WHERE m.sender_id != $1 AND mr.message_id IS NULL -- Count messages not read by the user
-                -- WHERE m.sender_id != $1 -- Alternative: Count all messages not sent by the user
-                -- AND m.created_at > COALESCE(cp.last_read_timestamp, '1970-01-01'::timestamp) -- Keep timestamp logic? Or rely purely on message_reads? Let's keep timestamp for now.
+                WHERE m.sender_id != $1 AND mr.message_id IS NULL
                 GROUP BY m.conversation_id
             ),
-             pinned_ids AS ( -- CTE to get pinned message IDs per conversation
+             pinned_ids AS (
                  SELECT
                      conversation_id,
                      array_agg(message_id ORDER BY pinned_at DESC) as pinned_message_ids
@@ -117,47 +210,58 @@ export const fetchAllConversationsByUserId = async (req: Request, res: Response)
                 dn.conversation_name,
                 c.is_group_chat,
                 c.name AS group_name,
+                c.avatar_path AS "groupAvatarPath", -- Get relative path
                 admin_user.username AS admin_name,
+                admin_avatar.file_path AS "adminAvatarPath", -- Get relative path
                 c.admin_id,
                 lm.content AS last_message,
                 lm.created_at AS last_message_time,
                 lm.sender_id AS last_message_sender_id,
-                -- Add prefix if last message was forwarded
+                lm.sender_avatar_path AS "lastMessageSenderAvatarPath", -- Get relative path
                 CASE
                     WHEN lm.is_forwarded THEN '[Переслано от ' || COALESCE(lm.forwarded_from_username, 'Unknown') || '] ' || lm.content
                     ELSE lm.content
-                END AS last_message_content_preview, -- Modified field name
+                END AS last_message_content_preview,
                 lm.sender_username AS last_message_sender_username,
-                lm.is_forwarded AS last_message_is_forwarded, -- Include flag
-                lm.forwarded_from_username AS last_message_forwarded_from, -- Include original sender name
+                lm.is_forwarded AS last_message_is_forwarded,
+                lm.forwarded_from_username AS last_message_forwarded_from,
                 COALESCE(uc.unread_count, 0) AS unread_count,
                 cp.is_muted,
                 cp.last_read_timestamp::text AS last_read_timestamp,
-                COALESCE(p_ids.pinned_message_ids, '{}'::uuid[]) AS pinned_message_ids, -- Get pinned IDs, default to empty array
-                pi.participants,
+                COALESCE(p_ids.pinned_message_ids, '{}'::uuid[]) AS pinned_message_ids,
+                pi.participants, -- Participants info (with relative paths)
                 c.created_at AS conversation_created_at
             FROM conversations c
             JOIN conversation_participants cp ON cp.conversation_id = c.id AND cp.user_id = $1
             JOIN dialog_names dn ON dn.conversation_id = c.id
             LEFT JOIN users admin_user ON admin_user.id = c.admin_id
+            LEFT JOIN user_avatars admin_avatar ON admin_user.id = admin_avatar.user_id
             LEFT JOIN last_messages lm ON lm.conversation_id = c.id
             LEFT JOIN unread_counts uc ON uc.conversation_id = c.id
             LEFT JOIN participants_info pi ON pi.conversation_id = c.id
-            LEFT JOIN pinned_ids p_ids ON p_ids.conversation_id = c.id -- Join CTE for pinned IDs
+            LEFT JOIN pinned_ids p_ids ON p_ids.conversation_id = c.id
             ORDER BY lm.created_at DESC NULLS LAST
             `,
             [userId]
         );
 
-        // Map results and format dates
+        // Map results, format dates, and construct absolute URLs -> NO LONGER NEEDED
         const formattedResults = result.rows.map(row => ({
             ...row,
             last_message_time: row.last_message_time ? new Date(row.last_message_time).toISOString() : null,
             last_read_timestamp: row.last_read_timestamp ? new Date(row.last_read_timestamp).toISOString() : null,
             conversation_created_at: new Date(row.conversation_created_at).toISOString(),
-            // pinned_message_ids is already an array from the query
+            // Return participants directly with avatarPath
+            // participants: row.participants?.map((p: any) => ({ ...p, avatarUrl: getAbsoluteUrl(p.avatarPath), avatarPath: undefined })) || [],
+            // Return relative paths directly
+            // groupAvatarUrl: getAbsoluteUrl(row.groupAvatarPath),
+            // adminAvatarUrl: getAbsoluteUrl(row.adminAvatarPath),
+            // lastMessageSenderAvatarUrl: getAbsoluteUrl(row.lastMessageSenderAvatarPath),
+            // groupAvatarPath: undefined, // Keep original path
+            // adminAvatarPath: undefined,
+            // lastMessageSenderAvatarPath: undefined,
+            
         }));
-
 
         console.log(`Чаты успешно получены для пользователя: ${userId}`);
         res.json(formattedResults);
@@ -341,6 +445,15 @@ export const addParticipantToConversation = async (req: Request, res: Response):
         );
 
         console.log(`Participant ${participant_id} added successfully to conversation ${conversation_id} by user ${requestingUserId}`);
+
+        // --- Emit conversationUpdated --- 
+        const updatedDetails = await fetchFullConversationDetails(conversation_id);
+        if (updatedDetails) {
+            socketService.emitToRoom(conversation_id, 'conversationUpdated', updatedDetails);
+            console.log(`Sent conversationUpdated after adding participant to room ${conversation_id}`);
+        }
+        // ---
+
         res.status(201).json({ message: 'Participant added successfully' }); 
     } catch (error) {
         console.error('Error adding participant to conversation:', error);
@@ -398,6 +511,20 @@ export const removeParticipantFromConversation = async (req: Request, res: Respo
         }
 
         console.log(`Participant ${participant_id} removed successfully from conversation ${conversation_id} by user ${requestingUserId}`);
+        
+        // --- Emit conversationUpdated --- 
+        const updatedDetails = await fetchFullConversationDetails(conversation_id);
+        if (updatedDetails) {
+            socketService.emitToRoom(conversation_id, 'conversationUpdated', updatedDetails);
+            console.log(`Sent conversationUpdated after removing participant to room ${conversation_id}`);
+        }
+        // ---
+
+        // Also emit userLeftGroup to the removed participant's personal room?
+        const leavePayload = { conversation_id: conversation_id, user_id: participant_id };
+        socketService.emitToUser(participant_id, 'userRemovedFromGroup', leavePayload); // New event name
+        console.log(`Sent userRemovedFromGroup event to user ${participant_id}`);
+
         res.status(200).json({ message: 'Participant removed successfully' });
     } catch (error) {
         console.error('Error removing participant from conversation:', error);
@@ -454,6 +581,15 @@ export const updateConversationName = async (req: Request, res: Response): Promi
         }
 
         console.log(`Conversation ${conversation_id} renamed successfully to "${updateResult.rows[0].name}" by user ${requestingUserId}`);
+
+        // --- Emit conversationUpdated --- 
+        const updatedDetails = await fetchFullConversationDetails(conversation_id);
+        if (updatedDetails) {
+            socketService.emitToRoom(conversation_id, 'conversationUpdated', updatedDetails);
+            console.log(`Sent conversationUpdated after rename to room ${conversation_id}`);
+        }
+        // ---
+
         res.status(200).json({ conversation_name: updateResult.rows[0].name });
     } catch (error) {
         console.error('Error updating conversation name:', error);
@@ -462,50 +598,40 @@ export const updateConversationName = async (req: Request, res: Response): Promi
 };
 
 export const fetchAllParticipantsByConversationId = async (req: Request, res: Response): Promise<any> => {
-    const { conversation_id } = req.body;
-
-    console.log(`Fetching participants for conversation: ${conversation_id}`);
-
+    const { conversationId } = req.params;
+    console.log(`Fetching participants for conversation: ${conversationId}`);
     try {
         const result = await pool.query(
-            `
-            SELECT u.id AS user_id, u.username, u.email
-            FROM conversation_participants cp
-            JOIN users u ON u.id = cp.user_id
-            WHERE cp.conversation_id = $1
-            ORDER BY u.username ASC
-            `,
-            [conversation_id]
+            `SELECT u.id as user_id, u.username, u.email, u.is_online, ua.file_path AS "avatarPath"
+             FROM conversation_participants cp JOIN users u ON u.id = cp.user_id LEFT JOIN user_avatars ua ON u.id = ua.user_id
+             WHERE cp.conversation_id = $1 ORDER BY u.username ASC`,
+            [conversationId]
         );
-
-        console.log(`Participants fetched successfully for conversation: ${conversation_id}`);
+        // Return results directly with avatarPath
+        // const participants = result.rows.map(p => ({ ...p, avatarUrl: getAbsoluteUrl(p.avatarPath), avatarPath: undefined }));
         res.json(result.rows);
     } catch (error) {
-        console.error('Error fetching participants:', error);
+        console.error(`Error fetching participants for conversation ${conversationId}:`, error);
         res.status(500).json({ error: 'Failed to fetch participants' });
     }
 };
 
 export const fetchAllParticipantsByConversationIdForMessages = async (conversation_id: string) => {
-    console.log(`Получение участников для разговора: ${conversation_id}`);
-
+    console.log(`Fetching participants for messages in conversation: ${conversation_id}`);
     try {
         const result = await pool.query(
-            `
-            SELECT u.id AS user_id, u.username, u.email
-            FROM conversation_participants cp
-            JOIN users u ON u.id = cp.user_id
-            WHERE cp.conversation_id = $1
-            ORDER BY u.username ASC
-            `,
+            `SELECT u.id as user_id, u.username, u.email, u.is_online, ua.file_path AS "avatarPath"
+             FROM conversation_participants cp JOIN users u ON u.id = cp.user_id LEFT JOIN user_avatars ua ON u.id = ua.user_id
+             WHERE cp.conversation_id = $1 ORDER BY u.username ASC`,
             [conversation_id]
         );
-
-        console.log(`Участники успешно получены для разговора: ${conversation_id}`);
+        console.log(`Fetched ${result.rowCount} participants for messages in conversation: ${conversation_id}`);
+        // Return results directly with avatarPath
+        // const participants = result.rows.map(p => ({ ...p, avatarUrl: getAbsoluteUrl(p.avatarPath), avatarPath: undefined }));
         return result.rows;
     } catch (error) {
-        console.error('Ошибка при получении участников:', error);
-        throw error;
+        console.error(`Error fetching participants for messages in conversation ${conversation_id}:`, error);
+        return null;
     }
 };
 
@@ -720,16 +846,18 @@ export const leaveOrDeleteConversation = async (req: Request, res: Response) => 
              );
              console.log(`User ${userId} left group ${conversationId}.`);
 
-             // Отправляем событие остальным участникам
-             const leavePayload = { conversation_id: conversationId, user_id: userId };
-             // Отправляем всем КРОМЕ покинувшего пользователя (он и так знает)
-             // Получение ID сокета покинувшего пользователя не требуется, т.к. emitToRoom исключает отправителя,
-             // но здесь нет 'отправителя' в контексте API. Лучше отправить всем в комнату.
-             socketService.emitToRoom(conversationId, 'userLeftGroup', leavePayload);
-             console.log(`Sent userLeftGroup event to room ${conversationId}`);
+             // --- Emit conversationUpdated to remaining participants --- 
+             const updatedDetails = await fetchFullConversationDetails(conversationId);
+             if (updatedDetails) {
+                 socketService.emitToRoom(conversationId, 'conversationUpdated', updatedDetails);
+                 console.log(`Sent conversationUpdated after user left to room ${conversationId}`);
+             }
+             // ---
 
-             // TODO: Возможно, нужно назначить нового админа, если вышел админ? (Требует доп. логики)
-             // TODO: Возможно, добавить системное сообщение в чат?
+             // Отправляем событие покинувшему пользователю, что он вышел
+             const leavePayloadSelf = { id: conversationId };
+             socketService.emitToUser(userId, 'conversationLeft', leavePayloadSelf); // New specific event for self
+             console.log(`Sent conversationLeft event to user ${userId}`);
 
          } else { // Удаление диалога (или группы целиком, если используется этот эндпоинт)
              if (is_group_chat) {
@@ -850,3 +978,166 @@ export const togglePinMessage = async (req: Request, res: Response): Promise<voi
     }
 };
 // --- End Pinning Logic ---
+
+// --- Group Avatar Logic ---
+
+// Helper to delete old group avatar file
+const findAndDeleteOldGroupAvatar = async (conversationId: string): Promise<void> => {
+    try {
+        const oldAvatarResult = await pool.query(
+            'SELECT avatar_path FROM conversations WHERE id = $1',
+            [conversationId]
+        );
+        if (oldAvatarResult.rows.length > 0 && oldAvatarResult.rows[0].avatar_path) {
+            const oldFilePathRelative = oldAvatarResult.rows[0].avatar_path;
+            const oldFilePathAbsolute = path.join(__dirname, '..', '..', 'uploads', 'group_avatars', path.basename(oldFilePathRelative));
+            if (fs.existsSync(oldFilePathAbsolute)) {
+                fs.unlink(oldFilePathAbsolute, (err) => {
+                    if (err) {
+                        console.error(`Error deleting old group avatar file ${oldFilePathAbsolute}:`, err);
+                    } else {
+                        console.log(`Old group avatar file ${oldFilePathAbsolute} deleted.`);
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error(`Error finding/deleting old group avatar for conversation ${conversationId}:`, error);
+    }
+};
+
+// Upload/Update Group Avatar
+export const uploadGroupAvatar = async (req: Request, res: Response): Promise<any> => {
+    const { conversationId } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (!req.file) {
+        return res.status(400).json({ error: 'No avatar file uploaded.' });
+    }
+
+    const { filename } = req.file;
+    const relativePath = `/uploads/group_avatars/${filename}`; // Relative path for DB
+    // const absoluteUrl = getAbsoluteUrl(relativePath); // Absolute URL for response - REMOVED
+
+    console.log(`User ${userId} attempting to upload group avatar for conversation ${conversationId}: ${filename}`);
+
+    try {
+        // 1. Check conversation exists, is group, and user is admin
+        const convResult = await pool.query('SELECT admin_id, is_group_chat FROM conversations WHERE id = $1', [conversationId]);
+        if (convResult.rowCount === 0) {
+            fs.unlinkSync(req.file.path); // Delete uploaded file
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        const { admin_id, is_group_chat } = convResult.rows[0];
+        if (!is_group_chat) {
+            fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: 'Cannot set avatar for a dialog' });
+        }
+        if (admin_id !== userId) {
+            fs.unlinkSync(req.file.path);
+            return res.status(403).json({ error: 'Forbidden: Only admin can change group avatar' });
+        }
+
+        // 2. Delete old file from filesystem
+        await findAndDeleteOldGroupAvatar(conversationId);
+
+        // 3. Update database with RELATIVE path
+        const updateResult = await pool.query(
+            'UPDATE conversations SET avatar_path = $1 WHERE id = $2 RETURNING avatar_path',
+            [relativePath, conversationId]
+        );
+
+        console.log(`Group avatar for conversation ${conversationId} updated successfully. Path: ${relativePath}`);
+
+        // 4. Fetch details (which will construct absolute URLs) and emit
+        const updatedDetails = await fetchFullConversationDetails(conversationId);
+        if (updatedDetails) {
+            socketService.emitToRoom(conversationId, 'conversationUpdated', updatedDetails);
+            console.log(`Sent conversationUpdated after group avatar update to room ${conversationId}`);
+        }
+
+        // 5. Return success response with RELATIVE PATH
+        res.status(200).json({ message: 'Group avatar updated successfully', groupAvatarPath: relativePath });
+
+    } catch (error: any) {
+        console.error('Error uploading group avatar:', error);
+        // Clean up uploaded file on error
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlink(req.file.path, (unlinkErr) => {
+                if (unlinkErr) console.error(`Error deleting orphaned group upload ${req.file?.path}:`, unlinkErr);
+            });
+        }
+        res.status(500).json({ error: 'Failed to upload group avatar', details: error.message });
+    }
+};
+
+// Delete Group Avatar
+export const deleteGroupAvatar = async (req: Request, res: Response): Promise<any> => {
+    const { conversationId } = req.params;
+    const userId = req.user?.id;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    console.log(`User ${userId} attempting to delete group avatar for conversation ${conversationId}`);
+
+    try {
+        // 1. Check conversation exists, is group, and user is admin
+        const convResult = await pool.query('SELECT admin_id, is_group_chat, avatar_path FROM conversations WHERE id = $1', [conversationId]);
+        if (convResult.rowCount === 0) {
+            return res.status(404).json({ error: 'Conversation not found' });
+        }
+        const { admin_id, is_group_chat, avatar_path } = convResult.rows[0];
+        if (!is_group_chat) {
+            return res.status(400).json({ error: 'Dialogs do not have avatars' });
+        }
+        if (admin_id !== userId) {
+            return res.status(403).json({ error: 'Forbidden: Only admin can delete group avatar' });
+        }
+        if (!avatar_path) {
+            return res.status(404).json({ error: 'Group does not have an avatar to delete' });
+        }
+
+        // 2. Delete file from filesystem
+        const filePathAbsolute = path.join(__dirname, '..', '..', 'uploads', 'group_avatars', path.basename(avatar_path));
+        if (fs.existsSync(filePathAbsolute)) {
+            fs.unlink(filePathAbsolute, (err) => {
+                if (err) {
+                    // Log error but proceed with DB update
+                    console.error(`Error deleting group avatar file ${filePathAbsolute}:`, err);
+                } else {
+                    console.log(`Group avatar file ${filePathAbsolute} deleted.`);
+                }
+            });
+        } else {
+             console.warn(`Group avatar file not found at ${filePathAbsolute}, skipping deletion.`);
+        }
+
+        // 3. Update database (set path to NULL)
+        await pool.query(
+            'UPDATE conversations SET avatar_path = NULL WHERE id = $1',
+            [conversationId]
+        );
+
+        console.log(`Group avatar path removed for conversation ${conversationId}`);
+
+        // 4. Emit conversationUpdated event
+        const updatedDetails = await fetchFullConversationDetails(conversationId);
+        if (updatedDetails) {
+            socketService.emitToRoom(conversationId, 'conversationUpdated', updatedDetails);
+            console.log(`Sent conversationUpdated after group avatar deletion to room ${conversationId}`);
+        }
+
+        // 5. Return success response
+        res.status(200).json({ message: 'Group avatar deleted successfully' });
+
+    } catch (error: any) {
+        console.error('Error deleting group avatar:', error);
+        res.status(500).json({ error: 'Failed to delete group avatar', details: error.message });
+    }
+};
+// --- End Group Avatar Logic ---

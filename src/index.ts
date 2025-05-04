@@ -7,6 +7,7 @@ import filesRoutes from './routes/filesRoutes';
 import contactsRoutes from './routes/contactsRoutes';
 import taskRoutes from './routes/taskRoutes';
 import usersRoutes from './routes/usersRoutes';
+import avatarRoutes from './routes/avatarRoutes';
 import http from 'http';
 import { Server, Socket } from 'socket.io';
 import { saveMessage } from './controllers/messagesController'; // Import saveMessage
@@ -23,6 +24,18 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
     console.log('Папка uploads создана');
 }
+// Создаем папку uploads/avatars, если она не существует
+const avatarUploadsDir = path.join(uploadsDir, 'avatars');
+if (!fs.existsSync(avatarUploadsDir)) {
+    fs.mkdirSync(avatarUploadsDir, { recursive: true });
+    console.log('Папка uploads/avatars создана');
+}
+// Создаем папку uploads/group_avatars, если она не существует
+const groupAvatarUploadsDir = path.join(uploadsDir, 'group_avatars');
+if (!fs.existsSync(groupAvatarUploadsDir)) {
+    fs.mkdirSync(groupAvatarUploadsDir, { recursive: true });
+    console.log('Папка uploads/group_avatars создана');
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -37,7 +50,10 @@ const io = new Server(server, {
 // Инициализируем сервис Socket.IO
 socketService.initializeSocketService(io);
 
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// Обслуживаем все папки внутри uploads статически
+app.use('/uploads', express.static(uploadsDir));
+// Старая версия (только /uploads):
+// app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 app.use('/auth', authRoutes);
 app.use('/conversations', conversationsRoutes);
@@ -46,6 +62,7 @@ app.use('/contacts', contactsRoutes);
 app.use('/files', filesRoutes);
 app.use('/tasks', taskRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/avatars', avatarRoutes);
 
 app.get('/', (req: Request, res: Response) => {
     console.log("test");
@@ -82,7 +99,12 @@ io.on('connection', async (socket: Socket) => {
             await updateUserOnlineStatus(userId, true);
 
             // Уведомляем всех о том, что пользователь онлайн через сервис
-            const statusPayload = { userId, isOnline: true };
+            const userDetails = await pool.query('SELECT username, ua.file_path AS "avatarUrl" FROM users u LEFT JOIN user_avatars ua ON u.id = ua.user_id WHERE u.id = $1', [userId]);
+            const statusPayload = {
+                 userId, 
+                 isOnline: true,
+                 // avatarUrl: userDetails.rows.length > 0 ? (userDetails.rows[0].avatarUrl || null) : null // Optionally add avatar here too
+            };
             socketService.emitToAll('userStatusChanged', statusPayload);
 
             console.log(`Пользователь ${userId} аутентифицирован, отмечен как онлайн и присоединен к комнатам.`);
@@ -105,30 +127,18 @@ io.on('connection', async (socket: Socket) => {
         console.log(`User ${userId} (Socket ${socket.id}) joined conversation: ${conversationId}`);
 
         try {
-            // Отмечаем все сообщения в чате как прочитанные
-            // await pool.query(
-            //     `
-            //     INSERT INTO message_reads (message_id, user_id, read_at)
-            //     SELECT m.id, $1, NOW()
-            //     FROM messages m
-            //     WHERE m.conversation_id = $2
-            //     AND NOT EXISTS (
-            //         SELECT 1 
-            //         FROM message_reads mr 
-            //         WHERE mr.message_id = m.id 
-            //         AND mr.user_id = $1
-            //     )
-            //     `,
-            //     [userId, conversationId]
-            // );
-
             // Получаем всех участников чата
             const participants = await fetchAllParticipantsByConversationIdForMessages(conversationId);
+            // Fetch reader's avatar
+            const readerDetails = await pool.query('SELECT ua.file_path AS "avatarUrl" FROM user_avatars ua WHERE ua.user_id = $1', [userId]);
+            const readerAvatarUrl = readerDetails.rows.length > 0 ? (readerDetails.rows[0].avatarUrl || null) : null;
+
             if (participants) {
                 // Уведомляем всех участников о прочтении сообщений через сервис
                 const messagesReadPayload = {
                     conversation_id: conversationId,
                     user_id: userId,
+                    avatarUrl: readerAvatarUrl, // Add reader's avatar URL
                     read_at: new Date()
                 };
                 socketService.emitToRoom(conversationId, 'messagesRead', messagesReadPayload);
@@ -156,10 +166,15 @@ io.on('connection', async (socket: Socket) => {
                 [message_ids, userId]
             );
 
+            // Fetch reader's avatar
+            const readerDetailsMark = await pool.query('SELECT ua.file_path AS "avatarUrl" FROM user_avatars ua WHERE ua.user_id = $1', [userId]);
+            const readerAvatarUrlMark = readerDetailsMark.rows.length > 0 ? (readerDetailsMark.rows[0].avatarUrl || null) : null;
+
             // Уведомляем всех участников о прочтении сообщений через сервис
             const markReadPayload = {
                 conversation_id,
                 user_id: userId,
+                avatarUrl: readerAvatarUrlMark, // Add reader's avatar URL
                 message_ids,
                 read_at: new Date()
             };
@@ -250,10 +265,15 @@ io.on('connection', async (socket: Socket) => {
                      [savedMessage.id, sender_id]
                  );
                  // Отправляем обновление статуса прочтения всем участникам через сервис
+                 // Fetch reader's avatar for self-read update
+                 const readerDetailsSelf = await pool.query('SELECT ua.file_path AS "avatarUrl" FROM user_avatars ua WHERE ua.user_id = $1', [sender_id]);
+                 const readerAvatarUrlSelf = readerDetailsSelf.rows.length > 0 ? (readerDetailsSelf.rows[0].avatarUrl || null) : null;
+
                  const messageReadPayload = {
                      conversation_id: conversation_id, // Добавляем ID чата
                      message_id: savedMessage.id,
                      user_id: sender_id,
+                     avatarUrl: readerAvatarUrlSelf, // Add reader's avatar URL
                      read_at: new Date().toISOString() // Используем ISO строку для консистентности
                  };
                  socketService.emitToRoom(conversation_id, 'messageReadUpdate', messageReadPayload); // Используем другое событие, чтобы не путать с messagesRead
@@ -364,7 +384,11 @@ io.on('connection', async (socket: Socket) => {
                 // Обновляем статус на оффлайн только если нет других активных соединений
                 if (!hasOtherConnections) {
                     await updateUserOnlineStatus(userId, false);
-                    const offlinePayload = { userId, isOnline: false };
+                    const offlinePayload = {
+                         userId, 
+                         isOnline: false,
+                         // avatarUrl: null // Optionally include avatar here? 
+                        };
                     socketService.emitToAll('userStatusChanged', offlinePayload); // Используем сервис
                     console.log(`Пользователь ${userId} отмечен как офлайн (last connection closed).`);
                 } else {

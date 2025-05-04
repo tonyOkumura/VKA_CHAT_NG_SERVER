@@ -3,6 +3,16 @@ import { PoolClient } from 'pg'; // Import PoolClient for transaction
 import pool from '../models/db';
 import * as socketService from '../services/socketService'; // Импортируем socketService
 
+// Remove SERVER_BASE_URL and getAbsoluteUrl
+// const HOST = process.env.HOST || 'localhost';
+// const PORT = process.env.PORT || 6000;
+// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
+
+// Function to construct absolute URL from relative path - REMOVED
+// const getAbsoluteUrl = (relativePath: string | null): string | null => {
+//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
+// };
+
 // Тип для данных из req.user (предполагая, что middleware добавляет пользователя)
 interface AuthenticatedUser {
     id: string;
@@ -71,11 +81,13 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                             'contact_id', u.id,
                             'username', u.username,
                             'email', u.email,
-                            'read_at', mr.read_at::text -- Convert read_at to text (ISO 8601)
+                            'read_at', mr.read_at::text,
+                            'avatarPath', ua.file_path -- Reader relative avatar path
                         ) ORDER BY mr.read_at
                     ) as read_by_users
                 FROM message_reads mr
                 JOIN users u ON u.id = mr.user_id
+                LEFT JOIN user_avatars ua ON u.id = ua.user_id
                 GROUP BY message_id
             )
             SELECT
@@ -83,6 +95,7 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                 m.content,
                 m.sender_id,
                 m.sender_username,
+                sender_avatar.file_path AS "senderAvatarPath", -- Sender relative avatar path
                 m.conversation_id,
                 m.created_at::text AS created_at,
                 m.is_edited,
@@ -109,6 +122,7 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
                  COALESCE(mra.read_by_users, '[]'::json) AS read_by_users,
                 COALESCE(mf.files, '[]'::json) AS files
             FROM messages m
+            LEFT JOIN user_avatars sender_avatar ON m.sender_id = sender_avatar.user_id
             LEFT JOIN message_files mf ON mf.message_id = m.id
             LEFT JOIN message_reads_agg mra ON mra.message_id = m.id
             LEFT JOIN messages replied_msg ON replied_msg.id = m.replied_to_message_id
@@ -125,10 +139,18 @@ export const fetchAllMessagesByConversationId = async (req: Request, res: Respon
         const formattedMessages = messagesResult.rows.map(msg => ({
             ...msg,
             created_at: new Date(msg.created_at).toISOString(),
-            read_by_users: msg.read_by_users.map((reader: any) => ({ ...reader, read_at: new Date(reader.read_at).toISOString() })),
-            files: msg.files.map((file: any) => ({ ...file, created_at: new Date(file.created_at).toISOString() })),
-            // is_unread is now determined client-side based on is_read_by_current_user or comparison with last read timestamp
-            is_unread: !msg.is_read_by_current_user && msg.sender_id !== userId
+            // Return relative path directly
+            // senderAvatarUrl: getAbsoluteUrl(msg.senderAvatarPath),
+            read_by_users: msg.read_by_users.map((reader: any) => ({ 
+                ...reader,
+                read_at: new Date(reader.read_at).toISOString(),
+                // Return relative path directly
+                // avatarUrl: getAbsoluteUrl(reader.avatarPath),
+                // avatarPath: undefined // Keep original path
+            })),
+            files: msg.files.map((file: any) => ({ ...file, created_at: new Date(file.created_at).toISOString() })), // File paths are already relative
+            is_unread: !msg.is_read_by_current_user && msg.sender_id !== userId,
+            // senderAvatarPath: undefined // Keep original path
         }));
 
         // 4. << REMOVED AUTOMATIC MARK AS READ LOGIC >>
@@ -239,61 +261,76 @@ export const saveMessage = async (
                              'contact_id', u.id,
                              'username', u.username,
                              'email', u.email,
-                             'read_at', mr.read_at::text -- Convert read_at to text (ISO 8601)
+                             'read_at', mr.read_at::text,
+                             'avatarPath', ua.file_path -- Reader relative avatar path
                          ) ORDER BY mr.read_at
                      ) as read_by_users
                  FROM message_reads mr
                  JOIN users u ON u.id = mr.user_id
+                 LEFT JOIN user_avatars ua ON u.id = ua.user_id
                  GROUP BY message_id
              )
              SELECT
                  m.id,
-                 m.conversation_id,
-                 m.sender_id,
-                 m.sender_username, -- Имя отправителя на момент отправки
                  m.content,
+                 m.sender_id,
+                 m.sender_username,
+                 sender_avatar.file_path AS "senderAvatarPath", -- Sender relative avatar path
+                 m.conversation_id,
                  m.created_at::text AS created_at,
                  m.is_edited,
                  m.replied_to_message_id,
-                 -- Данные об исходном сообщении для ответа
                  replied_msg.sender_username AS replied_to_sender_username,
                  CASE
-                     WHEN replied_msg.content IS NOT NULL THEN LEFT(replied_msg.content, 50) || CASE WHEN LENGTH(replied_msg.content) > 50 THEN '...' ELSE '' END
-                     WHEN replied_file.file_name IS NOT NULL THEN 'Файл: ' || replied_file.file_name
-                     ELSE NULL
+                    WHEN replied_msg.content IS NOT NULL THEN LEFT(replied_msg.content, 50) || CASE WHEN LENGTH(replied_msg.content) > 50 THEN '...' ELSE '' END
+                    WHEN replied_file.file_name IS NOT NULL THEN 'Файл: ' || replied_file.file_name
+                    ELSE NULL
                  END AS replied_to_content_preview,
-                 -- Получаем массив объектов прочитавших пользователей (здесь будет только отправитель)
+                 m.is_forwarded,
+                 m.forwarded_from_user_id,
+                 m.forwarded_from_username,
+                 m.original_message_id,
+                 -- For the sender, the message is always considered read
+                 TRUE AS is_read_by_current_user,
                  COALESCE(mra.read_by_users, '[]'::json) AS read_by_users,
-                 -- Получаем массив объектов с данными о файлах
                  COALESCE(mf.files, '[]'::json) AS files
              FROM messages m
+             LEFT JOIN user_avatars sender_avatar ON m.sender_id = sender_avatar.user_id
              LEFT JOIN message_files mf ON mf.message_id = m.id
              LEFT JOIN message_reads_agg mra ON mra.message_id = m.id
              LEFT JOIN messages replied_msg ON replied_msg.id = m.replied_to_message_id
              LEFT JOIN (SELECT message_id, file_name FROM files LIMIT 1) replied_file ON replied_file.message_id = replied_msg.id
              WHERE m.id = $1
              `,
-             [savedMessageId]
-         );
+            [savedMessageId]
+        );
 
+        if (fullMessageResult.rowCount === 0) {
+            // Should not happen, but handle gracefully
+            console.error(`Не удалось получить полную информацию о сохраненном сообщении ${savedMessageId}`);
+            throw new Error('Не удалось получить детали сообщения после сохранения.');
+        }
 
-        console.log(`Сообщение ${savedMessageId} успешно сохранено для разговора: ${conversationId}`);
+        // Format full message and construct absolute URLs for WebSocket payload
+        const dbMessage = fullMessageResult.rows[0];
+        const fullMessage = {
+             ...dbMessage,
+             created_at: new Date(dbMessage.created_at).toISOString(),
+             // Return relative path directly
+             // senderAvatarUrl: getAbsoluteUrl(dbMessage.senderAvatarPath),
+             read_by_users: dbMessage.read_by_users.map((reader: any) => ({ 
+                ...reader, 
+                read_at: new Date(reader.read_at).toISOString(),
+                // Return relative path directly
+                // avatarUrl: getAbsoluteUrl(reader.avatarPath),
+                // avatarPath: undefined // Keep original path
+            })),
+             files: dbMessage.files.map((file: any) => ({ ...file, created_at: new Date(file.created_at).toISOString() })), // File paths already relative
+             // senderAvatarPath: undefined // Keep original path
+         };
 
-        const finalMessage = fullMessageResult.rows[0];
-        // Форматируем даты
-        finalMessage.created_at = new Date(finalMessage.created_at).toISOString();
-         finalMessage.read_by_users = finalMessage.read_by_users.map((reader: any) => ({
-             ...reader,
-             read_at: new Date(reader.read_at).toISOString()
-         }));
-        finalMessage.files = finalMessage.files.map((file: any) => ({
-            ...file,
-            created_at: new Date(file.created_at).toISOString()
-        }));
-        // Добавляем is_unread: true (кроме отправителя, это будет обработано на клиенте или при отправке)
-        finalMessage.is_unread = true; // Для отправки всем, кроме отправителя
-
-        return finalMessage; // Возвращаем полный объект сообщения
+        console.log(`Сообщение ${savedMessageId} успешно сохранено и получено для WebSocket`);
+        return fullMessage; // Return formatted message with absolute URLs
 
     } catch (err) {
         // Откатываем транзакцию в случае ошибки
@@ -354,7 +391,7 @@ export const editMessage = async (req: Request, res: Response): Promise<void> =>
         await client.query('COMMIT'); // Commit the update
 
         // 3. Fetch full updated message details (outside transaction or with new one)
-        const updatedMessage = await fetchFullMessageDetailsById(messageId); // Use helper
+        const updatedMessage = await fetchFullMessageDetailsById(messageId, client); // Use helper
         if (!updatedMessage) {
              throw new Error(`Критическая ошибка: не удалось получить сообщение ${messageId} после редактирования.`);
         }
@@ -624,7 +661,8 @@ const fetchFullMessageDetailsById = async (messageId: string, client: PoolClient
                              'contact_id', u.id,
                              'username', u.username,
                              'email', u.email,
-                       'read_at', mr.read_at::text
+                             'read_at', mr.read_at::text,
+                             'avatarPath', ua.file_path -- Reader relative avatar path
                          ) ORDER BY mr.read_at
                      ) as read_by_users
                  FROM message_reads mr
@@ -677,5 +715,18 @@ const fetchFullMessageDetailsById = async (messageId: string, client: PoolClient
             ...file,
             created_at: new Date(file.created_at).toISOString()
         }));
+    // Remove absolute URL generation
+    // message.senderAvatarUrl = getAbsoluteUrl(message.senderAvatarPath);
+    // message.read_by_users = message.read_by_users.map((reader: any) => ({
+    //     ...reader,
+    //     read_at: new Date(reader.read_at).toISOString(),
+    //     avatarUrl: getAbsoluteUrl(reader.avatarPath),
+    //     avatarPath: undefined
+    // }));
+    // message.files = message.files.map((file: any) => ({
+    //     ...file,
+    //     created_at: new Date(file.created_at).toISOString()
+    // }));
+    // message.senderAvatarPath = undefined; // Keep original path
     return message;
 };

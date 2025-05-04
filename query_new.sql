@@ -19,6 +19,7 @@ CREATE TABLE conversations (
     name VARCHAR(100), -- Название чата (например, "Друзья" для группового чата). Для личных чатов может быть пустым (NULL).
     is_group_chat BOOLEAN DEFAULT FALSE, -- Это групповой чат? TRUE — да, FALSE — нет (личный чат между двумя людьми).
     admin_id UUID REFERENCES users(id), -- Кто администратор чата (ссылка на пользователя из таблицы users). Обычно это создатель чата.
+    avatar_path VARCHAR(500) NULL, -- Путь к файлу аватара группы (если есть)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время создания чата (московское время).
 );
 
@@ -282,6 +283,7 @@ CREATE TABLE task_comments (
 CREATE TABLE task_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор файла
     task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу, к которой прикреплён файл
+    uploader_id UUID REFERENCES users(id) ON DELETE SET NULL, -- Пользователь, загрузивший файл
     file_name VARCHAR(255) NOT NULL,                      -- Имя файла
     file_path VARCHAR(500) NOT NULL,                      -- Путь к файлу на сервере или в облаке
     file_type VARCHAR(255),                               -- Тип файла (например, image, document и т.д.)
@@ -340,3 +342,36 @@ CREATE INDEX idx_pinned_messages_conversation_pinned_at ON pinned_messages(conve
 
 -- Пример индекса для messages (если еще нет)
 CREATE INDEX idx_messages_conversation_created_at ON messages(conversation_id, created_at DESC);
+
+-- ======================================
+
+-- Дополнения для аватаров пользователей
+-- ======================================
+
+-- Таблица user_avatars: хранит информацию об аватарах пользователей.
+CREATE TABLE user_avatars (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, -- Ссылка на пользователя, которому принадлежит аватар. Если пользователь удален, аватар тоже удаляется.
+    file_name VARCHAR(255) NOT NULL,                                  -- Оригинальное имя файла аватара.
+    file_path VARCHAR(500) NOT NULL UNIQUE,                           -- Путь к файлу аватара на сервере (уникальный).
+    file_type VARCHAR(100),                                           -- MIME-тип файла (например, 'image/jpeg', 'image/png').
+    file_size INTEGER,                                                -- Размер файла в байтах.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,    -- Время загрузки аватара.
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP     -- Время последнего обновления аватара.
+);
+
+-- Триггер для автоматического обновления updated_at при изменении аватара
+CREATE OR REPLACE FUNCTION update_avatar_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_avatar_updated_at_trigger
+BEFORE UPDATE ON user_avatars
+FOR EACH ROW
+EXECUTE FUNCTION update_avatar_updated_at();
+
+-- Индекс для быстрого поиска аватара по пути файла (может быть полезно)
+CREATE INDEX idx_user_avatars_file_path ON user_avatars(file_path);

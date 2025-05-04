@@ -3,6 +3,11 @@ import pool from '../models/db';
 // import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
 
+// Remove SERVER_BASE_URL
+// const HOST = process.env.HOST || 'localhost';
+// const PORT = process.env.PORT || 6000;
+// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
+
 export const fetchContacts = async (req: Request, res: Response): Promise<any> => {
     let userId = null;
     if (req.user) {
@@ -16,9 +21,15 @@ export const fetchContacts = async (req: Request, res: Response): Promise<any> =
     try {
         const result = await pool.query(
             `
-            SELECT u.id, u.username, u.email, u.is_online
+            SELECT 
+                u.id, 
+                u.username, 
+                u.email, 
+                u.is_online,
+                ua.file_path AS "avatarPath" -- Get relative path
             FROM contacts c
             JOIN users u ON u.id = c.contact_id
+            LEFT JOIN user_avatars ua ON u.id = ua.user_id
             WHERE c.user_id = $1
             ORDER BY u.username ASC
             `,
@@ -26,6 +37,13 @@ export const fetchContacts = async (req: Request, res: Response): Promise<any> =
         );
 
         console.log(`Contacts fetched successfully for user: ${userId}`);
+        // Construct absolute URL -> No longer needed
+        // const contacts = result.rows.map(contact => ({
+        //     ...contact,
+        //     avatarUrl: contact.avatarPath ? `${SERVER_BASE_URL}${contact.avatarPath}` : null,
+        //     avatarPath: undefined // Remove relative path field
+        // }));
+        // Return rows directly
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching contacts:', error);

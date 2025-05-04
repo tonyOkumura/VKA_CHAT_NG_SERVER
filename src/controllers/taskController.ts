@@ -6,6 +6,16 @@ import fs from 'fs'; // Добавляем импорт fs
 // import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
 
+// Remove SERVER_BASE_URL and getAbsoluteUrl
+// const HOST = process.env.HOST || 'localhost';
+// const PORT = process.env.PORT || 6000;
+// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
+
+// Function to construct absolute URL from relative path - REMOVED
+// const getAbsoluteUrl = (relativePath: string | null): string | null => {
+//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
+// };
+
 // Интерфейс для пользователя из req.user (допустим, он есть)
 interface AuthenticatedUser {
     id: string;
@@ -29,6 +39,31 @@ const getUserDetails = async (userId: string | null | undefined, client?: PoolCl
     }
 };
 
+// Helper function to get user details WITH avatar (returns absolute URL) -> MODIFIED
+const getUserDetailsWithAvatar = async (userId: string | null | undefined, client?: PoolClient): Promise<{ id: string | null | undefined, username: string | null, avatarPath: string | null }> => {
+    if (!userId) return { id: userId, username: null, avatarPath: null };
+    const queryRunner = client || pool;
+    try {
+        const userResult = await queryRunner.query(
+            `SELECT u.username, ua.file_path AS "avatarPath"
+             FROM users u
+             LEFT JOIN user_avatars ua ON u.id = ua.user_id
+             WHERE u.id = $1`,
+            [userId]
+        );
+        const relativePath = userResult.rows.length > 0 ? userResult.rows[0].avatarPath : null;
+        return {
+            id: userId,
+            username: userResult.rows.length > 0 ? userResult.rows[0].username : null,
+            // avatarUrl: getAbsoluteUrl(relativePath), // Construct absolute URL here - REMOVED
+            avatarPath: relativePath // Return relative path directly
+        };
+    } catch (error) {
+        console.error(`Error fetching username/avatar for user ${userId}:`, error);
+        return { id: userId, username: null, avatarPath: null }; // Return null path on error
+    }
+};
+
 // Функция для создания новой задачи
 export const createTask = async (req: Request, res: Response): Promise<void> => {
     const { title, description, status, priority, assignee_id, due_date } = req.body;
@@ -49,26 +84,24 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
 
         const newTask = result.rows[0];
 
-        // Fetch usernames for the event payload
-        const creatorDetails = await getUserDetails(newTask.creator_id);
-        const assigneeDetails = await getUserDetails(newTask.assignee_id);
+        // Fetch usernames and avatars for the event payload
+        const creatorDetails = await getUserDetailsWithAvatar(newTask.creator_id);
+        const assigneeDetails = await getUserDetailsWithAvatar(newTask.assignee_id);
 
         // Emit event to general tasks room
         const eventPayload = {
             ...newTask,
             creator_username: creatorDetails.username,
             assignee_username: assigneeDetails.username,
-            // Ensure dates are in ISO 8601 format (Postgres typically returns them this way)
+            creatorAvatarPath: creatorDetails.avatarPath, // Added creator avatar path
+            assigneeAvatarPath: assigneeDetails.avatarPath, // Added assignee avatar path
             due_date: newTask.due_date ? new Date(newTask.due_date).toISOString() : null,
             created_at: new Date(newTask.created_at).toISOString(),
             updated_at: new Date(newTask.updated_at).toISOString(),
         };
-        // console.log(`[Socket Emit] Event: newTaskCreated | Target: Room general_tasks`); // Лог внутри сервиса
-        // io.to('general_tasks').emit('newTaskCreated', eventPayload);
         socketService.emitToRoom('general_tasks', 'newTaskCreated', eventPayload);
-        // console.log(`Event newTaskCreated emitted for task ${newTask.id}`);
 
-        res.status(201).json(newTask); // Send back the raw task data as before
+        res.status(201).json(newTask); // Send back the raw task data
         console.log(`Задача "${title}" (ID: ${newTask.id}) создана пользователем ${creator_id}`);
 
     } catch (error: any) {
@@ -91,43 +124,48 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
         let queryText = `
             SELECT t.*, 
                    creator.username AS creator_username, 
-                   assignee.username AS assignee_username
+                   assignee.username AS assignee_username,
+                   creator_avatar.file_path AS "creatorAvatarPath", -- Relative path
+                   assignee_avatar.file_path AS "assigneeAvatarPath" -- Relative path
             FROM tasks t
             LEFT JOIN users creator ON t.creator_id = creator.id
             LEFT JOIN users assignee ON t.assignee_id = assignee.id
+            LEFT JOIN user_avatars creator_avatar ON t.creator_id = creator_avatar.user_id
+            LEFT JOIN user_avatars assignee_avatar ON t.assignee_id = assignee_avatar.user_id
             WHERE (t.creator_id = $1 OR t.assignee_id = $1)
         `;
         const queryParams: any[] = [userId];
         let paramIndex = 2; // Начинаем со второго параметра ($2)
 
-        // Добавляем фильтр по статусу, если он указан
         if (status) {
             queryText += ` AND t.status = $${paramIndex++}`;
             queryParams.push(status);
         }
 
-        // Добавляем поиск по названию или описанию, если он указан
         if (search) {
             queryText += ` AND (t.title ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex})`;
-            queryParams.push(`%${search}%`); // ILIKE для регистронезависимого поиска
+            queryParams.push(`%${search}%`);
         }
 
-        queryText += ` ORDER BY t.created_at DESC`; // Сортируем по дате создания
+        queryText += ` ORDER BY t.created_at DESC`;
 
         const result = await pool.query(queryText, queryParams);
 
-        // Ensure dates are in ISO 8601 format for consistency if needed by frontend
-        const tasksWithIsoDates = result.rows.map(task => ({
+        const tasksWithAbsoluteUrls = result.rows.map(task => ({
             ...task,
+            // creatorAvatarUrl: getAbsoluteUrl(task.creatorAvatarPath),
+            // assigneeAvatarUrl: getAbsoluteUrl(task.assigneeAvatarPath),
             due_date: task.due_date ? new Date(task.due_date).toISOString() : null,
             created_at: new Date(task.created_at).toISOString(),
             updated_at: new Date(task.updated_at).toISOString(),
+            // creatorAvatarPath: undefined, // Keep relative paths
+            // assigneeAvatarPath: undefined
         }));
 
-        res.status(200).json(tasksWithIsoDates);
+        res.status(200).json(tasksWithAbsoluteUrls);
         console.log(`Получен список задач для пользователя ${userId} с фильтрами: status=${status}, search=${search}`);
 
-    } catch (error: any) { // Указываем тип any
+    } catch (error: any) {
         console.error('Ошибка при получении списка задач:', error);
         res.status(500).json({ error: 'Не удалось получить список задач' });
     }
@@ -136,16 +174,14 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
 // Функция для получения задачи по ID
 export const getTaskById = async (req: Request, res: Response): Promise<void> => {
     const userId = (req.user as AuthenticatedUser)?.id; // ID текущего пользователя
-    // const { id } = req.params; // Старый способ
-    const { taskId } = req.body; // Новый способ - ID из тела
+    const { taskId } = req.body; // ID из тела
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    // if (!id) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+    if (!taskId || typeof taskId !== 'string') {
         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
@@ -154,50 +190,49 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
         const queryText = `
             SELECT t.*, 
                    creator.username AS creator_username, 
-                   assignee.username AS assignee_username
+                   assignee.username AS assignee_username,
+                   creator_avatar.file_path AS "creatorAvatarPath", -- Relative path
+                   assignee_avatar.file_path AS "assigneeAvatarPath" -- Relative path
             FROM tasks t
             LEFT JOIN users creator ON t.creator_id = creator.id
             LEFT JOIN users assignee ON t.assignee_id = assignee.id
+            LEFT JOIN user_avatars creator_avatar ON t.creator_id = creator_avatar.user_id
+            LEFT JOIN user_avatars assignee_avatar ON t.assignee_id = assignee_avatar.user_id
             WHERE t.id = $1
         `;
         
-        // const result = await pool.query(queryText, [id]); // Старый запрос
-        const result = await pool.query(queryText, [taskId]); // Новый запрос
+        const result = await pool.query(queryText, [taskId]);
 
         if (result.rows.length === 0) {
             res.status(404).json({ error: 'Задача не найдена.' });
-            // console.log(`Попытка доступа к несуществующей задаче ID: ${id} пользователем ${userId}`); // Старый лог
-            console.log(`Попытка доступа к несуществующей задаче ID: ${taskId} пользователем ${userId}`); // Новый лог
+            console.log(`Попытка доступа к несуществующей задаче ID: ${taskId} пользователем ${userId}`);
             return;
         }
 
         const task = result.rows[0];
 
-        // Проверяем, имеет ли пользователь доступ к задаче
         if (task.creator_id !== userId && task.assignee_id !== userId) {
-             // Можно расширить логику доступа, например, для администраторов или участников проекта
             res.status(403).json({ error: 'Доступ к этой задаче запрещен.' });
-            // console.log(`Пользователь ${userId} пытался получить доступ к задаче ${id}, к которой не имеет отношения.`); // Старый лог
-            console.log(`Пользователь ${userId} пытался получить доступ к задаче ${taskId}, к которой не имеет отношения.`); // Новый лог
+            console.log(`Пользователь ${userId} пытался получить доступ к задаче ${taskId}, к которой не имеет отношения.`);
             return;
         }
 
-         // Ensure dates are in ISO 8601 format
-        const taskWithIsoDates = {
+        const taskWithAbsoluteUrls = {
             ...task,
+            // creatorAvatarUrl: getAbsoluteUrl(task.creatorAvatarPath),
+            // assigneeAvatarUrl: getAbsoluteUrl(task.assigneeAvatarPath),
             due_date: task.due_date ? new Date(task.due_date).toISOString() : null,
             created_at: new Date(task.created_at).toISOString(),
             updated_at: new Date(task.updated_at).toISOString(),
+            // creatorAvatarPath: undefined,
+            // assigneeAvatarPath: undefined
         };
 
-        res.status(200).json(taskWithIsoDates);
-        // console.log(`Получена задача ID: ${id} пользователем ${userId}`); // Старый лог
-        console.log(`Получена задача ID: ${taskId} пользователем ${userId}`); // Новый лог
+        res.status(200).json(taskWithAbsoluteUrls);
+        console.log(`Получена задача ID: ${taskId} пользователем ${userId}`);
 
-    } catch (error: any) { // Указываем тип any
-        // console.error(`Ошибка при получении задачи ID ${id}:`, error); // Старый лог
-        console.error(`Ошибка при получении задачи ID ${taskId}:`, error); // Новый лог
-        // Проверка на неверный формат UUID
+    } catch (error: any) {
+        console.error(`Ошибка при получении задачи ID ${taskId}:`, error);
         if (error.code === '22P02') { 
              res.status(400).json({ error: 'Неверный формат ID задачи.' });
         } else {
@@ -206,14 +241,11 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
     }
 };
 
-
 // Функция для обновления задачи
 export const updateTask = async (req: Request, res: Response): Promise<void> => {
     const userId = (req.user as AuthenticatedUser)?.id;
-    // const { id: taskId } = req.params; // Старый способ
     const { taskId, ...updates } = req.body; // Получаем taskId и остальные обновления из тела
 
-    // console.log(`Попытка обновления задачи ID: ${taskId} пользователем ${userId}. Данные:`, updates); // taskId из params
     console.log(`Попытка обновления задачи ID: ${taskId} (из тела) пользователем ${userId}. Данные:`, updates);
 
     if (!userId) {
@@ -221,8 +253,7 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
         return;
     }
 
-    // if (!taskId) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+    if (!taskId || typeof taskId !== 'string') {
         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
@@ -253,162 +284,202 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
         client = await pool.connect();
         await client.query('BEGIN');
 
-        const currentTaskResult = await client.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
+        // Получаем текущее состояние задачи перед обновлением для логирования и проверки доступа
+        const currentTaskResult = await client.query(
+            `SELECT t.*, creator.username AS creator_username, assignee.username AS assignee_username
+             FROM tasks t
+             LEFT JOIN users creator ON t.creator_id = creator.id
+             LEFT JOIN users assignee ON t.assignee_id = assignee.id
+             WHERE t.id = $1`,
+            [taskId]
+        );
 
         if (currentTaskResult.rows.length === 0) {
             await client.query('ROLLBACK');
-            res.status(404).json({ error: 'Задача не найдена.' });
-            console.log(`Попытка обновить несуществующую задачу ID: ${taskId} пользователем ${userId}`);
-            client.release(); // Release client on error
+            res.status(404).json({ error: 'Задача для обновления не найдена.' });
+            return;
+        }
+        const currentTask = currentTaskResult.rows[0];
+
+        // Проверка прав: обновлять может создатель или назначенный исполнитель
+        if (currentTask.creator_id !== userId && currentTask.assignee_id !== userId) {
+            await client.query('ROLLBACK');
+            res.status(403).json({ error: 'Вы не можете обновлять эту задачу.' });
             return;
         }
 
-        const currentTask = currentTaskResult.rows[0];
-
-        // if (currentTask.creator_id !== userId && currentTask.assignee_id !== userId) {
-        //     await client.query('ROLLBACK');
-        //     res.status(403).json({ error: 'У вас нет прав на обновление этой задачи.' });
-        //     console.log(`Пользователь ${userId} пытался обновить задачу ${taskId}, к которой не имеет отношения.`);
-        //     client.release(); // Release client on error
-        // }
-
-        const setClauses: string[] = [];
-        const queryParams: any[] = [];
-        let paramIndex = 1;
+        // Формируем строку запроса и параметры для обновления
+        let setClauses: string[] = [];
+        let queryParams: any[] = [taskId, userId]; // userId для WHERE в логах
+        let paramIndex = 3;
 
         Object.keys(updatesToApply).forEach(key => {
             const oldValue = currentTask[key];
             const newValue = updatesToApply[key];
-            if (String(oldValue ?? '') !== String(newValue ?? '')) {
-                // Handle potential empty string vs null difference for assignee_id
-                if (key === 'assignee_id' && !newValue) {
-                    setClauses.push(`${key} = $${paramIndex++}`);
-                    queryParams.push(null); // Ensure empty assignee becomes NULL
-                } else {
-                setClauses.push(`${key} = $${paramIndex++}`);
-                queryParams.push(newValue);
-                }
+            
+            // Сравниваем значения, чтобы логировать только реальные изменения
+            // Обработка дат: преобразуем в строки ISO для сравнения
+            const oldValueStr = oldValue instanceof Date ? oldValue.toISOString() : String(oldValue);
+            const newValueStr = newValue instanceof Date ? newValue.toISOString() : String(newValue); // Обработка null/undefined
 
-                logEntriesData.push({
-                    action: `update_${key}`,
-                    old_value: String(oldValue ?? 'null'),
-                    new_value: String(newValue ?? 'null'),
-                });
+            if (oldValueStr !== newValueStr) {
+                 setClauses.push(`${key} = $${paramIndex}`);
+                 queryParams.push(newValue);
+
+                 let actionText = `Изменено поле ${key}`;
+                 if (key === 'assignee_id') actionText = 'Изменен исполнитель';
+                 if (key === 'status') actionText = 'Изменен статус';
+                 if (key === 'priority') actionText = 'Изменен приоритет';
+                 if (key === 'due_date') actionText = 'Изменен срок выполнения';
+
+                 logEntriesData.push({
+                     action: actionText,
+                     old_value: oldValueStr, // Log original value
+                     new_value: newValueStr ?? 'null' // Log new value or 'null'
+                 });
+                 paramIndex++;
             }
         });
 
+        // If no actual changes detected based on value comparison
         if (setClauses.length === 0) {
-             await client.query('ROLLBACK');
-            // Fetch potentially updated usernames for the response
-            const creatorDetails = await getUserDetails(currentTask.creator_id, client);
-            const assigneeDetails = await getUserDetails(currentTask.assignee_id, client);
-            const taskWithUsernames = {
-                 ...currentTask,
-                 creator_username: creatorDetails.username,
-                 assignee_username: assigneeDetails.username,
-                 due_date: currentTask.due_date ? new Date(currentTask.due_date).toISOString() : null,
-                 created_at: new Date(currentTask.created_at).toISOString(),
-                 updated_at: new Date(currentTask.updated_at).toISOString(),
-            }
-             res.status(200).json(taskWithUsernames);
-             console.log(`Попытка обновить задачу ID: ${taskId} пользователем ${userId}, но значения не изменились.`);
-             client.release(); // Release client
-             return;
+            await client.query('ROLLBACK');
+            // Fetch current details for the response even if no update occurred
+            const creatorDetailsNoChange = await getUserDetailsWithAvatar(currentTask.creator_id, client);
+            const assigneeDetailsNoChange = await getUserDetailsWithAvatar(currentTask.assignee_id, client);
+            const noChangeResponse = {
+                ...currentTask,
+                creator_username: creatorDetailsNoChange.username,
+                assignee_username: assigneeDetailsNoChange.username,
+                creatorAvatarPath: creatorDetailsNoChange.avatarPath,
+                assigneeAvatarPath: assigneeDetailsNoChange.avatarPath,
+                due_date: currentTask.due_date ? new Date(currentTask.due_date).toISOString() : null,
+                created_at: new Date(currentTask.created_at).toISOString(),
+                updated_at: new Date(currentTask.updated_at).toISOString(),
+                // creatorAvatarPath: undefined,
+                // assigneeAvatarPath: undefined
+            };
+            res.status(200).json({ message: 'Нет изменений для применения.', task: noChangeResponse });
+            console.log(`Task ${taskId} update requested by ${userId}, but no actual changes detected.`);
+            return;
         }
 
-        // Add updated_at clause
-        setClauses.push(`updated_at = CURRENT_TIMESTAMP`);
+        // Prepare parameters specifically for the UPDATE query and the SET clauses
+        const updateQueryParams = [taskId]; // $1 = taskId
+        let placeholderIndex = 2; // Placeholders for updated values start from $2
+        const updateSetClauses: string[] = []; // Use a new array for correct SET clauses
 
-        const updateQuery = `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-        queryParams.push(taskId);
+        Object.keys(updatesToApply).forEach(key => {
+            // Only add values/clauses that actually changed
+            const oldValue = currentTask[key];
+            const newValue = updatesToApply[key];
+            const oldValueStr = oldValue instanceof Date ? oldValue.toISOString() : String(oldValue);
+            const newValueStr = newValue instanceof Date ? newValue.toISOString() : String(newValue);
 
-        const updatedTaskResult = await client.query(updateQuery, queryParams);
-        const updatedTask = updatedTaskResult.rows[0];
+            if (oldValueStr !== newValueStr) {
+                 updateQueryParams.push(newValue); // Add the value to the parameter array
+                 updateSetClauses.push(`${key} = $${placeholderIndex}`); // Add the clause with the correct placeholder index
+                 placeholderIndex++; // Increment index for the next parameter
+            }
+        });
 
-        // 3. Вставляем записи в лог
+        // Включаем updated_at в запрос (не требует параметра)
+        updateSetClauses.push(`updated_at = CURRENT_TIMESTAMP`);
+        
+        // Construct the query using the correctly generated SET clauses
+        const updateQuery = `UPDATE tasks SET ${updateSetClauses.join(', ')} WHERE id = $1 RETURNING *`;
+
+        // Execute UPDATE with its specific parameters
+        const updatedResult = await client.query(updateQuery, updateQueryParams);
+        const updatedTask = updatedResult.rows[0];
+
+        // Создаем записи в логах using [taskId, userId]
         if (logEntriesData.length > 0) {
-            const logPromises = logEntriesData.map(log => {
-                return client!.query(
-                    `INSERT INTO task_logs (task_id, action, old_value, new_value, changed_by)
-                     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-                    [taskId, log.action, log.old_value, log.new_value, userId]
-                );
-            });
-            const logResults = await Promise.all(logPromises);
-             const savedLogs = logResults.map(res => res.rows[0]);
-            // Fetch username for logs and emit log events
-            const changerDetails = await getUserDetails(userId, client);
-            for (const savedLog of savedLogs) {
-                const logEventPayload = {
-                    ...savedLog,
-                    log_id: savedLog.id, // Ensure correct field name
-                    changed_by_username: changerDetails.username,
-                    changed_at: new Date(savedLog.changed_at).toISOString(),
-                };
-                const logTargetRoom = `task_${taskId}`;
-                // console.log(`[Socket Emit] Event: newLogEntry | Target: Room ${logTargetRoom}`); // Лог внутри сервиса
-                // io.to(logTargetRoom).emit('newLogEntry', logEventPayload);
-                socketService.emitToRoom(logTargetRoom, 'newLogEntry', logEventPayload);
-                // console.log(`Event newLogEntry emitted for task ${taskId}, log ${savedLog.id}`);
-            }
+            const logValues = logEntriesData.map(log =>
+                `($1, '${log.action.replace(/'/g, "''")}', '${String(log.old_value).replace(/'/g, "''")}', '${String(log.new_value).replace(/'/g, "''")}', $2)`
+            ).join(',');
+            const logQuery = `INSERT INTO task_logs (task_id, action, old_value, new_value, changed_by) VALUES ${logValues}`;
+            // Pass [taskId, userId] for the log query
+            await client.query(logQuery, [taskId, userId]); 
         }
 
-        await client.query('COMMIT'); // Фиксируем транзакцию
+        await client.query('COMMIT');
 
-        // Fetch final usernames for the event/response payload
-        const finalCreatorDetails = await getUserDetails(updatedTask.creator_id, client); // Use client for consistency within transaction
-        const finalAssigneeDetails = await getUserDetails(updatedTask.assignee_id, client);
+        // --- WebSocket Event --- 
+        // Fetch usernames and avatars for the updated task
+        const creatorDetails = await getUserDetailsWithAvatar(updatedTask.creator_id, client);
+        const assigneeDetails = await getUserDetailsWithAvatar(updatedTask.assignee_id, client);
+        const changerDetails = await getUserDetailsWithAvatar(userId, client); // User who made the change
 
-        // Emit update event to relevant rooms
-        const taskUpdatedPayload = {
+        const eventPayload = {
             ...updatedTask,
-            creator_username: finalCreatorDetails.username,
-            assignee_username: finalAssigneeDetails.username,
+            creator_username: creatorDetails.username,
+            assignee_username: assigneeDetails.username,
+            creatorAvatarPath: creatorDetails.avatarPath, // Pass relative path
+            assigneeAvatarPath: assigneeDetails.avatarPath, // Pass relative path
+            // Details about the change
+            change_details: logEntriesData, // Send detailed changes
+            changed_by: {
+                user_id: changerDetails.id,
+                username: changerDetails.username,
+                // avatarUrl: changerDetails.avatarUrl, // Use path instead
+                avatarPath: changerDetails.avatarPath // Pass relative path
+            },
+            // Ensure dates are in ISO 8601 format
             due_date: updatedTask.due_date ? new Date(updatedTask.due_date).toISOString() : null,
             created_at: new Date(updatedTask.created_at).toISOString(),
             updated_at: new Date(updatedTask.updated_at).toISOString(),
         };
+        
+        // Emit to the specific task room and general tasks room
         const taskRoom = `task_${taskId}`;
-        // console.log(`[Socket Emit] Event: taskUpdated | Target: Room general_tasks`); // Лог внутри сервиса
-        // io.to('general_tasks').emit('taskUpdated', taskUpdatedPayload);
-        socketService.emitToRoom('general_tasks', 'taskUpdated', taskUpdatedPayload);
-        // console.log(`[Socket Emit] Event: taskUpdated | Target: Room ${taskRoom}`); // Лог внутри сервиса
-        // io.to(taskRoom).emit('taskUpdated', taskUpdatedPayload);
-        socketService.emitToRoom(taskRoom, 'taskUpdated', taskUpdatedPayload);
-        // console.log(`Event taskUpdated emitted for task ${taskId} to general_tasks and task_${taskId}`);
+        socketService.emitToRoom(taskRoom, 'taskUpdated', eventPayload);
+        socketService.emitToRoom('general_tasks', 'taskUpdated', eventPayload); // Also notify the list view
+        console.log(`Event taskUpdated emitted for task ${taskId} to rooms ${taskRoom} and general_tasks`);
+        // ---
 
-        res.status(200).json(taskUpdatedPayload); // Send updated task with usernames
-        console.log(`Задача ID: ${taskId} успешно обновлена пользователем ${userId}.`);
+        // Construct the response object with absolute URLs and correct date formats
+        const responseTask = {
+            ...updatedTask,
+            creator_username: creatorDetails.username,
+            assignee_username: assigneeDetails.username,
+            creatorAvatarPath: creatorDetails.avatarPath,
+            assigneeAvatarPath: assigneeDetails.avatarPath,
+            due_date: updatedTask.due_date ? new Date(updatedTask.due_date).toISOString() : null,
+            created_at: new Date(updatedTask.created_at).toISOString(),
+            updated_at: new Date(updatedTask.updated_at).toISOString(),
+            // Remove potentially existing relative paths if they were selected - NO, KEEP THEM
+            // creatorAvatarPath: undefined,
+            // assigneeAvatarPath: undefined
+        };
+
+        res.status(200).json(responseTask); // Send the formatted task object
+        console.log(`Задача ID: ${taskId} успешно обновлена пользователем ${userId}`);
 
     } catch (error: any) {
         if (client) {
-            await client.query('ROLLBACK'); // Откатываем транзакцию в случае любой ошибки
-            console.error(`Транзакция обновления задачи ${taskId} отменена из-за ошибки.`);
+            await client.query('ROLLBACK');
         }
         console.error(`Ошибка при обновлении задачи ID ${taskId}:`, error);
-        if (error.code === '22P02') { // Invalid UUID format for task id or assignee_id
-            res.status(400).json({ error: 'Неверный формат ID задачи или исполнителя.' });
-        } else if (error.code === '23503') { // Foreign key violation (e.g., invalid assignee_id)
-            res.status(400).json({ error: 'Указан неверный ID исполнителя.' });
-        } else {
+         if (error.code === '22P02') { 
+             res.status(400).json({ error: 'Неверный формат ID задачи или исполнителя.' });
+         } else if (error.code === '23503') { // Foreign key violation (e.g., assignee_id doesn't exist)
+              res.status(400).json({ error: 'Указанный исполнитель не найден.' });
+         } else {
              res.status(500).json({ error: 'Не удалось обновить задачу' });
-        }
+         }
     } finally {
         if (client) {
-            client.release(); // Возвращаем клиента в пул
-            console.log(`Клиент базы данных освобожден после обновления задачи ${taskId}.`);
+            client.release();
         }
     }
 };
 
-
 // Функция для удаления задачи
 export const deleteTask = async (req: Request, res: Response): Promise<void> => {
     const userId = (req.user as AuthenticatedUser)?.id;
-    // const { id: taskId } = req.params; // Старый способ
     const { taskId } = req.body; // Новый способ
 
-    // console.log(`Попытка удаления задачи ID: ${taskId} пользователем ${userId}.`); // Старый лог
     console.log(`Попытка удаления задачи ID: ${taskId} (из тела) пользователем ${userId}.`);
 
     if (!userId) {
@@ -416,8 +487,7 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
         return;
     }
 
-    // if (!taskId) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+    if (!taskId || typeof taskId !== 'string') {
         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
@@ -486,13 +556,8 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
         // Emit deletion event
         const eventPayloadDelete = { taskId: taskId };
         const taskRoomDelete = `task_${taskId}`;
-        // console.log(`[Socket Emit] Event: taskDeleted | Target: Room general_tasks`); // Лог внутри сервиса
-        // io.to('general_tasks').emit('taskDeleted', eventPayloadDelete);
-        socketService.emitToRoom('general_tasks', 'taskDeleted', eventPayloadDelete);
-        // console.log(`[Socket Emit] Event: taskDeleted | Target: Room ${taskRoomDelete}`); // Лог внутри сервиса
-        // io.to(taskRoomDelete).emit('taskDeleted', eventPayloadDelete);
         socketService.emitToRoom(taskRoomDelete, 'taskDeleted', eventPayloadDelete);
-         console.log(`Event taskDeleted emitted for task ${taskId} to general_tasks and task_${taskId}`);
+        console.log(`Event taskDeleted emitted for task ${taskId} to task_${taskId}`);
 
         res.status(200).json({ message: 'Задача и все связанные данные успешно удалены.', taskId: taskId });
         console.log(`Задача ID: ${taskId} успешно удалена пользователем ${userId}.`);
@@ -521,150 +586,125 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
 // Функция для добавления комментария к задаче
 export const addTaskComment = async (req: Request, res: Response): Promise<void> => {
     const commenter_id = req.user?.id;
-    // const { id: taskId } = req.params; // Старый способ
-    const { taskId, comment } = req.body; // Новый способ: taskId и comment из тела
+    const { taskId, comment } = req.body; // taskId from body
 
-     // console.log(`Попытка добавить комментарий к задаче ID: ${taskId} пользователем ${commenter_id}.`); // Старый лог
-     console.log(`Попытка добавить комментарий к задаче ID: ${taskId} (из тела) пользователем ${commenter_id}.`);
+    console.log(`Попытка добавить комментарий к задаче ID: ${taskId} пользователем ${commenter_id}`);
 
     if (!commenter_id) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
-
-    // if (!taskId || !comment) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string' || !comment || typeof comment !== 'string') { // Новая проверка
-        res.status(400).json({ error: 'Необходимо указать ID задачи (taskId) и текст комментария (comment) в теле запроса.' });
+    if (!taskId || !comment || typeof taskId !== 'string') {
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) или текст комментария в теле запроса.' });
         return;
     }
 
-    let client: PoolClient | null = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-
-        // 1. Проверяем существование задачи и права доступа (комментировать может создатель или исполнитель)
-        const taskResult = await client.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [taskId]);
-        if (taskResult.rows.length === 0) {
-            await client.query('ROLLBACK');
+        // Verify task exists and user has access (optional, but good practice)
+        const taskCheck = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [taskId]);
+        if (taskCheck.rows.length === 0) {
             res.status(404).json({ error: 'Задача не найдена.' });
-            console.log(`Попытка комментировать несуществующую задачу ID: ${taskId} пользователем ${commenter_id}`);
-            client.release();
             return;
         }
-        // const task = taskResult.rows[0];
-        // if (task.creator_id !== commenter_id && task.assignee_id !== commenter_id) {
-        //     await client.query('ROLLBACK');
-        //     res.status(403).json({ error: 'У вас нет прав комментировать эту задачу.' });
-        //      console.log(`Пользователь ${commenter_id} пытался комментировать задачу ${taskId}, к которой не имеет отношения.`);
-        //      client.release();
+        // Add access check if needed, e.g.:
+        // const taskData = taskCheck.rows[0];
+        // if (taskData.creator_id !== commenter_id && taskData.assignee_id !== commenter_id) {
+        //     res.status(403).json({ error: 'Вы не можете комментировать эту задачу.' });
+        //     return;
         // }
 
-        // 2. Добавляем комментарий
-        const insertResult = await client.query(
-            `INSERT INTO task_comments (task_id, commenter_id, comment) VALUES ($1, $2, $3) RETURNING *`,
-            [taskId, commenter_id, comment]
+        const result = await pool.query(
+            'INSERT INTO task_comments (task_id, commenter_id, comment) VALUES ($1, $2, $3) RETURNING *'
+            , [taskId, commenter_id, comment]
         );
-        const newComment = insertResult.rows[0];
+        const newComment = result.rows[0];
 
-        await client.query('COMMIT');
-
-        // Fetch commenter username for the event payload
-        const commenterDetails = await getUserDetails(newComment.commenter_id); // Fetch outside transaction
-
-        // Emit event to the specific task room
+        // --- WebSocket Event ---
+        // Fetch commenter details (username, avatar)
+        const commenterDetails = await getUserDetailsWithAvatar(newComment.commenter_id);
         const eventPayload = {
             ...newComment,
             commenter_username: commenterDetails.username,
-            created_at: new Date(newComment.created_at).toISOString(),
+            // commenterAvatarUrl: commenterDetails.avatarUrl, // Use path instead
+            commenterAvatarPath: commenterDetails.avatarPath, // Added commenter avatar path
+            created_at: new Date(newComment.created_at).toISOString() // Ensure ISO format
         };
-        const commentTargetRoom = `task_${taskId}`;
-        // console.log(`[Socket Emit] Event: newTaskComment | Target: Room ${commentTargetRoom}`); // Лог внутри сервиса
-        // io.to(commentTargetRoom).emit('newTaskComment', eventPayload);
-        socketService.emitToRoom(commentTargetRoom, 'newTaskComment', eventPayload);
-        // console.log(`Event newTaskComment emitted for task ${taskId}, comment ${newComment.id}`);
+        const taskRoom = `task_${taskId}`;
+        socketService.emitToRoom(taskRoom, 'newTaskComment', eventPayload);
+        console.log(`Event newTaskComment emitted for task ${taskId} to room ${taskRoom}`);
+        // ---
 
-        res.status(201).json(eventPayload); // Возвращаем созданный комментарий с именем пользователя
-        console.log(`Комментарий ID ${newComment.id} добавлен к задаче ${taskId} пользователем ${commenter_id}.`);
+        res.status(201).json(newComment);
+        console.log(`Комментарий к задаче ${taskId} добавлен пользователем ${commenter_id}`);
 
     } catch (error: any) {
-        if (client) {
-            await client.query('ROLLBACK');
-            console.error(`Транзакция добавления комментария к задаче ${taskId} отменена из-за ошибки.`);
-        }
         console.error(`Ошибка при добавлении комментария к задаче ${taskId}:`, error);
-        if (error.code === '22P02') { // Invalid UUID format for task id
+        if (error.code === '23503') { // Foreign key violation
+            res.status(404).json({ error: 'Задача или пользователь не найдены.' });
+        } else if (error.code === '22P02') { 
              res.status(400).json({ error: 'Неверный формат ID задачи.' });
-        } else if (error.code === '23503') { // Foreign key violation (task_id or commenter_id)
-             res.status(404).json({ error: 'Указана неверная задача или пользователь.' });
         } else {
             res.status(500).json({ error: 'Не удалось добавить комментарий' });
-        }
-    } finally {
-        if (client) {
-            client.release();
-             console.log(`Клиент базы данных освобожден после добавления комментария к задаче ${taskId}.`);
         }
     }
 };
 
 // Функция для получения комментариев к задаче
 export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
-     const userId = (req.user as AuthenticatedUser)?.id;
-     // const { id: taskId } = req.params; // Старый способ
-     const { taskId } = req.body; // Новый способ
+    const userId = req.user?.id;
+    const { taskId } = req.params; // taskId from URL parameters
 
-     // console.log(`Запрос комментариев к задаче ID: ${taskId} пользователем ${userId}.`); // Старый лог
-     console.log(`Запрос комментариев к задаче ID: ${taskId} (из тела) пользователем ${userId}.`);
+    console.log(`Попытка получить комментарии к задаче ID: ${taskId} пользователем ${userId}`);
 
-     if (!userId) {
+    if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
-     }
-
-     // if (!taskId) { // Старая проверка
-     if (!taskId || typeof taskId !== 'string') { // Новая проверка
-         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
-         return;
-     }
+    }
+    if (!taskId) {
+        res.status(400).json({ error: 'Не указан ID задачи в параметрах URL.' });
+        return;
+    }
 
     try {
-        // 1. Проверяем существование задачи и права доступа (просматривать может создатель или исполнитель)
-        const taskResult = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [taskId]);
-        if (taskResult.rows.length === 0) {
-            res.status(404).json({ error: 'Задача не найдена.' });
-            console.log(`Попытка получить комментарии несуществующей задачи ID: ${taskId} пользователем ${userId}`);
-            return;
-        }
-        // const task = taskResult.rows[0];
-        // if (task.creator_id !== userId && task.assignee_id !== userId) {
-        //     res.status(403).json({ error: 'У вас нет прав просматривать комментарии этой задачи.' });
-        //     console.log(`Пользователь ${userId} пытался получить комментарии задачи ${taskId}, к которой не имеет отношения.`);
-        //     return;
-        // }
+         // Verify user has access to the task (optional but recommended)
+         const taskCheck = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [taskId]);
+         if (taskCheck.rows.length === 0) {
+             res.status(404).json({ error: 'Задача не найдена.' });
+             return;
+         }
+         // const taskData = taskCheck.rows[0];
+         // if (taskData.creator_id !== userId && taskData.assignee_id !== userId) {
+         //     res.status(403).json({ error: 'Вы не можете просматривать комментарии к этой задаче.' });
+         //     return;
+         // }
 
-        // 2. Получаем комментарии с именами пользователей
-        const commentsResult = await pool.query(
-            `SELECT tc.*, u.username AS commenter_username
-             FROM task_comments tc
-             JOIN users u ON tc.commenter_id = u.id
-             WHERE tc.task_id = $1
-             ORDER BY tc.created_at ASC`,
+        const result = await pool.query(
+            `
+            SELECT tc.*, 
+                   u.username AS commenter_username,
+                   ua.file_path AS "commenterAvatarPath" -- Relative path
+            FROM task_comments tc
+            LEFT JOIN users u ON tc.commenter_id = u.id
+            LEFT JOIN user_avatars ua ON tc.commenter_id = ua.user_id
+            WHERE tc.task_id = $1 
+            ORDER BY tc.created_at ASC
+            `,
             [taskId]
         );
 
-         // Ensure dates are in ISO 8601 format
-        const commentsWithIsoDates = commentsResult.rows.map(comment => ({
+        const commentsWithAbsoluteUrls = result.rows.map(comment => ({
             ...comment,
+            // commenterAvatarUrl: getAbsoluteUrl(comment.commenterAvatarPath),
             created_at: new Date(comment.created_at).toISOString(),
+            // commenterAvatarPath: undefined // Keep relative path
         }));
 
-        res.status(200).json(commentsWithIsoDates);
-        console.log(`Получены комментарии (${commentsResult.rowCount}) для задачи ${taskId} пользователем ${userId}.`);
+        res.status(200).json(commentsWithAbsoluteUrls);
+        console.log(`Получены комментарии к задаче ${taskId}`);
 
     } catch (error: any) {
-        console.error(`Ошибка при получении комментариев задачи ${taskId}:`, error);
-        if (error.code === '22P02') { // Invalid UUID format for task id
+        console.error(`Ошибка при получении комментариев к задаче ${taskId}:`, error);
+        if (error.code === '22P02') { 
              res.status(400).json({ error: 'Неверный формат ID задачи.' });
         } else {
             res.status(500).json({ error: 'Не удалось получить комментарии' });
@@ -677,12 +717,10 @@ export const getTaskComments = async (req: Request, res: Response): Promise<void
 // Функция для добавления вложения к задаче
 export const addTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const uploader_id = req.user?.id;
-    // const { id: taskId } = req.params; // Старый способ
     const { taskId } = req.body; // Ожидаем taskId в теле form-data 
     const file = req.file; // Получаем файл из multer
 
-    // console.log(`Попытка добавить вложение к задаче ID: ${taskId} пользователем ${uploader_id}. Файл:`, file); // Старый лог
-    console.log(`Попытка добавить вложение к задаче ID: ${taskId} (из тела) пользователем ${uploader_id}. Файл:`, file);
+    console.log(`Попытка добавить вложение к задаче ID: ${taskId} пользователем ${uploader_id}. Файл:`, file);
 
     if (!uploader_id) {
         // Если файл был загружен, но пользователь не аутентифицирован, удаляем файл
@@ -691,8 +729,7 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
         return;
     }
 
-    // if (!taskId) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+    if (!taskId || typeof taskId !== 'string') {
         if (file) fs.unlinkSync(file.path);
         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса (form-data).' });
         return;
@@ -792,19 +829,16 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
 // Функция для получения списка вложений задачи
 export const getTaskAttachments = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    // const { id: taskId } = req.params; // Старый способ
     const { taskId } = req.body; // Новый способ
 
-    // console.log(`Запрос вложений задачи ID: ${taskId} пользователем ${userId}.`); // Старый лог
-    console.log(`Запрос вложений задачи ID: ${taskId} (из тела) пользователем ${userId}.`);
+    console.log(`Запрос вложений задачи ID: ${taskId} пользователем ${userId}.`);
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
-    // if (!taskId) { // Старая проверка
-    if (!taskId || typeof taskId !== 'string') { // Новая проверка
+    if (!taskId || typeof taskId !== 'string') {
         res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' });
         return;
     }
@@ -869,8 +903,7 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
      const userId = (req.user as AuthenticatedUser)?.id;
      const { attachmentId } = req.params; // Оставляем attachmentId из params
 
-     // console.log(`Запрос на скачивание вложения ID: ${attachmentId} пользователем ${userId}.`);
-     console.log(`Запрос на скачивание вложения ID: ${attachmentId} (из params) пользователем ${userId}.`);
+     console.log(`Запрос на скачивание вложения ID: ${attachmentId} пользователем ${userId}.`);
 
      if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
