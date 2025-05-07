@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import { verifyToken } from '../middlewares/authMiddleware';
-import uploadTaskAttachment from '../middlewares/uploadMiddleware'; // Импортируем middleware
-// Импортируем контроллеры
+import uploadTaskAttachment from '../middlewares/uploadMiddleware';
 import {
     createTask,
     getTasks,
@@ -14,36 +13,37 @@ import {
     getTaskAttachments,
     deleteTaskAttachment,
     downloadTaskAttachment,
-    getTaskLogs,
-    generateTaskReport
+    getTaskAttachmentInfo,
+    generateTaskReport,
+    getTaskLogs
 } from '../controllers/taskController';
 
 const router = Router();
 
-// Middleware для проверки аутентификации будет применяться ко всем роутам задач
 router.use(verifyToken);
 
-// --- Задачи (Tasks) ---
+// Задачи (Tasks)
 router.post('/', createTask);
 router.get('/', getTasks);
-router.post('/get', getTaskById);
-router.put('/update', updateTask);
-router.delete('/delete', deleteTask);
+router.get('/:taskId', getTaskById);
+router.put('/:taskId', updateTask);
+router.delete('/:taskId', deleteTask);
 
-// --- Комментарии к задачам (Comments) ---
-router.post('/comments/add', addTaskComment);
-router.post('/comments/get', getTaskComments);
+// Комментарии к задачам (Comments)
+router.post('/:taskId/comments', addTaskComment);
+router.get('/:taskId/comments', getTaskComments);
 
-// --- Вложения к задачам (Attachments) ---
-router.post('/attachments/add', uploadTaskAttachment, addTaskAttachment);
-router.post('/attachments/get', getTaskAttachments);
-router.delete('/attachments/:attachmentId/delete', deleteTaskAttachment);
-router.get('/attachments/:attachmentId/download', downloadTaskAttachment);
+// Вложения к задачам (Attachments)
+router.post('/:taskId/attachments', uploadTaskAttachment, addTaskAttachment);
+router.get('/:taskId/attachments', getTaskAttachments);
+router.post('/attachments/info', getTaskAttachmentInfo); // Новый маршрут
+router.post('/attachments/download', downloadTaskAttachment); // Новый маршрут
+router.post('/attachments/delete', deleteTaskAttachment); // Новый маршрут
 
-// --- Логи изменений задач (Logs) ---
-router.post('/logs/get', getTaskLogs);
+// Логи изменений задач (Logs)
+router.get('/:taskId/logs', getTaskLogs);
 
-// --- Отчеты (Reports) ---
+// Отчеты (Reports)
 router.get('/report', generateTaskReport);
 
-export default router; 
+export default router;

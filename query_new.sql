@@ -293,13 +293,14 @@ CREATE TABLE task_attachments (
 
 -- 4. Таблица логов изменений (истории задач)
 CREATE TABLE task_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор записи логов
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу
-    action VARCHAR(100) NOT NULL,                         -- Тип изменения (например, смена статуса, изменение приоритета)
-    old_value VARCHAR(255),                               -- Старое значение поля (если применимо)
-    new_value VARCHAR(255),                               -- Новое значение поля (если применимо)
-    changed_by UUID REFERENCES users(id) ON DELETE SET NULL,  -- Пользователь, инициировавший изменение
-    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время изменения (московское время)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    action VARCHAR(100) NOT NULL,
+    old_value VARCHAR(255),
+    new_value VARCHAR(255),
+    changed_by UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 5. Триггер для автоматического обновления поля updated_at при изменении задачи

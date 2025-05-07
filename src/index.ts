@@ -17,6 +17,7 @@ import { updateUserOnlineStatus } from './controllers/userController';
 import fs from 'fs';
 import path from 'path';
 import * as socketService from './services/socketService'; // Импортируем сервис
+import morgan from 'morgan';
 
 // Создаем папку uploads, если она не существует
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -40,12 +41,20 @@ if (!fs.existsSync(groupAvatarUploadsDir)) {
 const app = express();
 const server = http.createServer(app);
 app.use(json());
+app.use(morgan('combined'));
+app.use((req: Request, res: Response, next: Function) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    console.log('Headers:', req.headers);
+    console.log('Body:', req.body);
+    next();
+});
 // Убираем export, инициализируем io как локальную переменную
 const io = new Server(server, {
     cors: {
         origin: '*',
     },
 });
+
 
 // Инициализируем сервис Socket.IO
 socketService.initializeSocketService(io);
