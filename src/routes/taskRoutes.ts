@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { verifyToken } from '../middlewares/authMiddleware';
-import uploadTaskAttachment from '../middlewares/uploadMiddleware';
 import {
     createTask,
     getTasks,
@@ -34,7 +33,7 @@ router.post('/:taskId/comments', addTaskComment);
 router.get('/:taskId/comments', getTaskComments);
 
 // Вложения к задачам (Attachments)
-router.post('/:taskId/attachments', uploadTaskAttachment, addTaskAttachment);
+router.post('/:taskId/attachments', addTaskAttachment);
 router.get('/:taskId/attachments', getTaskAttachments);
 router.post('/attachments/info', getTaskAttachmentInfo); // Новый маршрут
 router.post('/attachments/download', downloadTaskAttachment); // Новый маршрут

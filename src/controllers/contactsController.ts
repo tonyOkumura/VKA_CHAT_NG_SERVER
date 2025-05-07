@@ -1,12 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../models/db';
-// import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
-
-// Remove SERVER_BASE_URL
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
 
 export const fetchContacts = async (req: Request, res: Response): Promise<any> => {
     let userId = null;
@@ -37,13 +31,6 @@ export const fetchContacts = async (req: Request, res: Response): Promise<any> =
         );
 
         console.log(`Contacts fetched successfully for user: ${userId}`);
-        // Construct absolute URL -> No longer needed
-        // const contacts = result.rows.map(contact => ({
-        //     ...contact,
-        //     avatarUrl: contact.avatarPath ? `${SERVER_BASE_URL}${contact.avatarPath}` : null,
-        //     avatarPath: undefined // Remove relative path field
-        // }));
-        // Return rows directly
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching contacts:', error);

@@ -3,21 +3,9 @@ import { PoolClient } from 'pg'; // Import PoolClient for transaction
 import pool from '../models/db';
 import * as socketService from '../services/socketService'; // Импортируем socketService
 
-// Remove SERVER_BASE_URL and getAbsoluteUrl
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
-
-// Function to construct absolute URL from relative path - REMOVED
-// const getAbsoluteUrl = (relativePath: string | null): string | null => {
-//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
-// };
-
-// Тип для данных из req.user (предполагая, что middleware добавляет пользователя)
 interface AuthenticatedUser {
     id: string;
-    username: string; // Assume middleware provides username
-    // другие поля пользователя, если они есть
+    username: string; 
 }
 
 // Добавляем новые поля в запрос
@@ -339,7 +327,6 @@ export const saveMessage = async (
         throw new Error(`Не удалось сохранить сообщение: ${(err as Error).message}`);
     }
 };
-
 // --- Edit Message --- (Uses helper to fetch full details)
 export const editMessage = async (req: Request, res: Response): Promise<void> => {
     const { messageId, content } = req.body;

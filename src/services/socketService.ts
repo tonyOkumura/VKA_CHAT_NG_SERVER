@@ -2,11 +2,6 @@ import { Server } from 'socket.io';
 
 let _io: Server | null = null;
 
-/**
- * Initializes the Socket.IO service with the server instance.
- * Should be called once during server startup.
- * @param socketIoInstance The Socket.IO Server instance.
- */
 export const initializeSocketService = (socketIoInstance: Server): void => {
     if (_io) {
         console.warn('Socket.IO Service already initialized.');
@@ -16,12 +11,7 @@ export const initializeSocketService = (socketIoInstance: Server): void => {
     console.log('Socket.IO Service initialized successfully.');
 };
 
-/**
- * Emits an event to a specific room.
- * @param room The name of the room.
- * @param event The name of the event.
- * @param data The data to send with the event.
- */
+
 export const emitToRoom = (room: string, event: string, data: any): void => {
     console.log(`[Debug Socket Service] Вызов emitToRoom для комнаты '${room}', события '${event}'`);
     if (!_io) {
@@ -38,11 +28,7 @@ export const emitToRoom = (room: string, event: string, data: any): void => {
     }
 };
 
-/**
- * Emits an event to all connected clients.
- * @param event The name of the event.
- * @param data The data to send with the event.
- */
+
 export const emitToAll = (event: string, data: any): void => {
     console.log(`[Debug Socket Service] Вызов emitToAll для события '${event}'`);
     if (!_io) {
@@ -59,19 +45,10 @@ export const emitToAll = (event: string, data: any): void => {
     }
 };
 
-/**
- * Emits an event to a specific user's personal room (user_{userId}).
- * @param userId The ID of the target user.
- * @param event The name of the event.
- * @param data The data to send with the event.
- */
+
 export const emitToUser = (userId: string, event: string, data: any): void => {
-    if (!userId) {
-        console.warn('[Socket Service] Attempted to emit to a null/undefined userId.');
-        return;
-    }
+   
     const userRoom = `user_${userId}`;
     emitToRoom(userRoom, event, data); // Reuse emitToRoom for user-specific room
 };
 
-// Add more specific emit functions if needed (e.g., emitToSocketId, emitToAllExceptSender) 

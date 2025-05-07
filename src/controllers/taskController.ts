@@ -8,11 +8,11 @@ import * as socketService from '../services/socketService';
 // Интерфейс для пользователя из req.user
 interface AuthenticatedUser {
     id: string;
-    username: string;
+    username?: string;
 }
 
 // Валидные статусы и приоритеты
-const validStatuses = ['open', 'in_progress', 'done', 'canceled'];
+const validStatuses = ['open', 'in_progress', 'done', 'closed'];
 const validPriorities = [1, 2, 3, 4, 5];
 
 // Helper function to get user details with avatar

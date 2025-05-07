@@ -10,7 +10,7 @@ import path from 'path';
 // }
 // No longer needed due to declaration merging in src/types/express/index.d.ts
 
-const AVATARS_BASE_URL = '/uploads/avatars/'; // Base URL part for relative path storage
+const AVATARS_BASE_URL = '/uploads/avatars/'; 
 
 // --- Helper Function --- Find and Delete Old Avatar File ---
 const findAndDeleteOldAvatar = async (userId: string): Promise<void> => {
@@ -44,13 +44,6 @@ const findAndDeleteOldAvatar = async (userId: string): Promise<void> => {
     }
 };
 
-// --- Controller Functions ---
-
-/**
- * Upload or Update User Avatar
- * Handles file upload via multer, updates database record.
- * Deletes the old avatar file if one exists.
- */
 export const uploadAvatar = async (req: Request, res: Response): Promise<any> => {
     // Check user from the augmented Request type
     if (!req.user || !req.user.id) {
@@ -102,10 +95,6 @@ export const uploadAvatar = async (req: Request, res: Response): Promise<any> =>
     }
 };
 
-/**
- * Get User Avatar Path -> MODIFIED BACK to return relative path in avatarPath field
- * Retrieves the relative avatar path for a given user ID.
- */
 export const getAvatar = async (req: Request, res: Response): Promise<any> => {
     const { userId } = req.params;
     if (!userId) {
@@ -134,10 +123,6 @@ export const getAvatar = async (req: Request, res: Response): Promise<any> => {
     }
 };
 
-/**
- * Delete User Avatar
- * Removes avatar record from database and deletes the file from the filesystem.
- */
 export const deleteAvatar = async (req: Request, res: Response): Promise<any> => {
     // Check user from the augmented Request type
     if (!req.user || !req.user.id) {
@@ -192,10 +177,6 @@ export const deleteAvatar = async (req: Request, res: Response): Promise<any> =>
     }
 };
 
-/**
- * Stream User Avatar Image
- * Retrieves the avatar file from the filesystem and streams it back.
- */
 export const streamAvatar = async (req: Request, res: Response): Promise<any> => {
     const { userId } = req.params;
     if (!userId) {
