@@ -1,8 +1,10 @@
 import { Server, Socket } from 'socket.io';
 import { saveMessage } from '../controllers/messagesController';
-import { fetchAllParticipantsByConversationIdForMessages } from '../lib/dbHelpers';
+import { 
+    fetchAllParticipantsByConversationIdForMessages 
+} from '../lib/dbHelpers';
 import { updateUserOnlineStatus } from '../controllers/userController';
-import knex from '../lib/knex'; // Заменили pool на knex
+import knex from '../lib/knex';
 import { emitToRoom, emitToAll, emitToUser } from './socketService';
 import { ROOM_PREFIXES } from '../config/constants';
 
@@ -251,7 +253,6 @@ async function handleDisconnect(socket: Socket, reason: string): Promise<void> {
             const hasOtherConnections = Array.from(userSockets.values()).some((uid) => uid === userId);
             if (!hasOtherConnections) {
                 await updateUserOnlineStatus(userId, false);
-                // При дисконнекте отправляем только ID и статус, т.к. userDetails может быть уже недоступен
                 emitToAll('userStatusChanged', { userId, isOnline: false });
                 console.log(`User ${userId} marked offline`);
             }
@@ -259,4 +260,4 @@ async function handleDisconnect(socket: Socket, reason: string): Promise<void> {
             console.error(`Error handling disconnect for user ${userId}:`, error);
         }
     }
-}
+} 

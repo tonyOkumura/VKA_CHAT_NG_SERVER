@@ -1,72 +1,92 @@
--- Устанавливаем часовой пояс на московское время (UTC+3).
--- Это значит, что все временные метки (например, когда создано сообщение) будут в московском времени.
+-- Устанавливаем часовой пояс на московское время (UTC+3)
 SET TIME ZONE 'Europe/Moscow';
 
--- Таблица users: здесь хранятся данные о пользователях мессенджера.
+-- Таблица пользователей (users)
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор пользователя (UUID — это длинный случайный код, который никогда не повторяется).
-    username VARCHAR(255) UNIQUE NOT NULL, -- Имя пользователя (до 50 символов), должно быть уникальным (нельзя зарегистрировать два одинаковых имени).
-    email VARCHAR(100) UNIQUE NOT NULL, -- Электронная почта пользователя (до 100 символов), тоже должна быть уникальной.
-    password VARCHAR(255) NOT NULL, -- Пароль пользователя (до 255 символов), обязателен.
-    is_online BOOLEAN DEFAULT FALSE, -- Статус: онлайн (TRUE) или офлайн (FALSE). По умолчанию пользователь офлайн.
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время создания аккаунта (автоматически ставится текущее московское время).
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время последнего обновления аккаунта (например, если пользователь сменил пароль).
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(255) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    is_online BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    birth_date DATE
+    avatar_path VARCHAR(500) NULL,
 );
 
--- Таблица conversations: здесь хранятся все чаты (личные и групповые).
-CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор чата.
-    name VARCHAR(100), -- Название чата (например, "Друзья" для группового чата). Для личных чатов может быть пустым (NULL).
-    is_group_chat BOOLEAN DEFAULT FALSE, -- Это групповой чат? TRUE — да, FALSE — нет (личный чат между двумя людьми).
-    admin_id UUID REFERENCES users(id), -- Кто администратор чата (ссылка на пользователя из таблицы users). Обычно это создатель чата.
-    avatar_path VARCHAR(500) NULL, -- Путь к файлу аватара группы (если есть)
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время создания чата (московское время).
+-- Таблица диалогов (dialogs)
+CREATE TABLE dialogs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user1_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user2_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user1_id, user2_id)
 );
 
--- Таблица conversation_participants: связывает пользователей и чаты (кто в каком чате состоит).
--- Это нужно, чтобы поддерживать групповые чаты, где может быть больше двух участников.
-CREATE TABLE conversation_participants (
-    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE, -- Идентификатор чата (ссылка на таблицу conversations). Если чат удаляется, запись тоже удаляется (ON DELETE CASCADE).
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Идентификатор пользователя (ссылка на таблицу users). Если пользователь удаляется, запись тоже удаляется.
-    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время, когда пользователь присоединился к чату (московское время).
-    is_muted BOOLEAN DEFAULT FALSE, -- Замьючен ли чат для этого пользователя?
-    last_read_timestamp TIMESTAMP, -- Время последнего прочтения сообщений в этом чате пользователем (NULL, если не читал или отметили как непрочитанный)
-    PRIMARY KEY (conversation_id, user_id) -- Уникальная комбинация: один пользователь может быть в одном чате только один раз.
+-- Таблица групп (groups)
+CREATE TABLE groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    admin_id UUID REFERENCES users(id),
+    avatar_path VARCHAR(500) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Таблица messages: здесь хранятся все сообщения в чатах.
+-- Таблица ролей в группах (group_roles)
+CREATE TABLE group_roles (
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL,
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, user_id)
+);
+
+-- Таблица участников диалогов (dialog_participants)
+CREATE TABLE dialog_participants (
+    dialog_id UUID REFERENCES dialogs(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_muted BOOLEAN DEFAULT FALSE,
+    last_read_timestamp TIMESTAMP,
+    notification_settings JSONB DEFAULT '{"sound": true, "vibration": true}',
+    unread_count INTEGER DEFAULT 0,
+    PRIMARY KEY (dialog_id, user_id)
+);
+
+-- Таблица участников групп (group_participants)
+CREATE TABLE group_participants (
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_muted BOOLEAN DEFAULT FALSE,
+    last_read_timestamp TIMESTAMP,
+    notification_settings JSONB DEFAULT '{"sound": true, "vibration": true}',
+    unread_count INTEGER DEFAULT 0,
+    PRIMARY KEY (group_id, user_id)
+);
+
+-- Таблица сообщений (messages)
 CREATE TABLE messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор сообщения.
-    conversation_id UUID REFERENCES conversations(id), -- В каком чате это сообщение (ссылка на таблицу conversations).
-    sender_id UUID REFERENCES users(id), -- Кто отправил сообщение (ссылка на таблицу users).
-    sender_username VARCHAR(255), -- Имя отправителя на момент отправки сообщения
-    content TEXT, -- Текст сообщения (может быть любой длины, например, "Привет, как дела?").
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время отправки сообщения (московское время).
-    -- Новые поля для ответов и редактирования
-    replied_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL, -- ID сообщения, на которое отвечают (если оно удалено, ссылка станет NULL)
-    is_edited BOOLEAN DEFAULT FALSE, -- Было ли сообщение отредактировано
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    dialog_id UUID REFERENCES dialogs(id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    sender_id UUID REFERENCES users(id),
+    sender_username VARCHAR(255),
+    content TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    replied_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    is_edited BOOLEAN DEFAULT FALSE,
     is_forwarded BOOLEAN DEFAULT FALSE,
     forwarded_from_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     forwarded_from_username VARCHAR(255),
-    original_message_id UUID REFERENCES messages(id) ON DELETE SET NULL
+    original_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    CHECK ((dialog_id IS NOT NULL AND group_id IS NULL) OR (dialog_id IS NULL AND group_id IS NOT NULL))
 );
 
--- Изменяем ограничение внешнего ключа для messages.conversation_id
--- Сначала удаляем существующее ограничение (если оно есть и названо стандартно)
-ALTER TABLE messages
-DROP CONSTRAINT IF EXISTS messages_conversation_id_fkey;
-
--- Затем добавляем его снова с опцией ON DELETE CASCADE
--- ВАЖНО: Убедитесь, что имя ограничения 'messages_conversation_id_fkey' соответствует вашему, если оно другое.
-ALTER TABLE messages
-ADD CONSTRAINT messages_conversation_id_fkey
-FOREIGN KEY (conversation_id)
-REFERENCES conversations(id)
-ON DELETE CASCADE;
-
--- Таблица message_reads: отслеживает, кто именно прочитал сообщение.
--- Теперь используется в основном для отображения статуса конкретных сообщений (две галочки),
--- а не для подсчета непрочитанных в списке чатов.
+-- Таблица прочтений сообщений (message_reads)
 CREATE TABLE message_reads (
     message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -74,238 +94,329 @@ CREATE TABLE message_reads (
     PRIMARY KEY (message_id, user_id)
 );
 
--- Таблица message_mentions: хранит упоминания пользователей в сообщениях (например, @username).
--- Это нужно, чтобы отправлять уведомления тем, кого упомянули.
+-- Таблица упоминаний в сообщениях (message_mentions)
 CREATE TABLE message_mentions (
-    message_id UUID REFERENCES messages(id) ON DELETE CASCADE, -- Идентификатор сообщения, где есть упоминание.
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Кого упомянули (ссылка на таблицу users).
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время упоминания (московское время).
-    PRIMARY KEY (message_id, user_id) -- Уникальная комбинация: одного пользователя можно упомянуть в одном сообщении только один раз.
+    message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, user_id)
 );
 
--- Таблица contacts: хранит список контактов пользователя (кто у кого в друзьях).
-CREATE TABLE IF NOT EXISTS contacts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор записи.
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Чей это контакт (ссылка на таблицу users).
-    contact_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Кто добавлен в контакты (ссылка на таблицу users).
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Время добавления контакта (московское время).
-    UNIQUE (user_id, contact_id) -- Уникальная комбинация: нельзя добавить одного и того же пользователя в контакты дважды.
+-- Таблица контактов (contacts)
+CREATE TABLE contacts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    contact_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, contact_id)
 );
 
--- Таблица files: хранит файлы, прикреплённые к сообщениям (например, фото, видео, документы).
+-- Таблица файлов (files)
 CREATE TABLE files (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор файла.
-    message_id UUID REFERENCES messages(id) ON DELETE CASCADE, -- К какому сообщению прикреплён файл (если сообщение удаляется, файл тоже удаляется).
-    file_name VARCHAR(255) NOT NULL, -- Имя файла (например, "photo.jpg").
-    file_path VARCHAR(500) NOT NULL, -- Путь к файлу на сервере или в облаке (например, "/uploads/photo.jpg").
-    file_type VARCHAR(255), -- Тип файла (например, "image", "video", "document").
-    file_size INTEGER, -- Размер файла в байтах (например, 5242880 для 5 МБ).
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время загрузки файла (московское время).
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID REFERENCES messages(id) ON DELETE CASCADE,
+    file_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_type VARCHAR(255),
+    file_size INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Таблица notifications: хранит уведомления для пользователей (например, о новых сообщениях).
+-- Таблица уведомлений (notifications)
 CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), -- Уникальный идентификатор уведомления.
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Кому адресовано уведомление (ссылка на таблицу users).
-    type VARCHAR(255) NOT NULL, -- Тип уведомления: 'new_message' (новое сообщение), 'mention' (упоминание), 'group_add' (добавление в чат).
-    content TEXT NOT NULL, -- Текст уведомления (например, "Новое сообщение от user123").
-    related_conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL, -- Ссылка на чат, связанный с уведомлением (может стать NULL, если чат удалён).
-    related_message_id UUID REFERENCES messages(id) ON DELETE SET NULL, -- Ссылка на сообщение, связанное с уведомлением (может стать NULL, если сообщение удалено).
-    is_read BOOLEAN DEFAULT FALSE, -- Прочитано ли уведомление? FALSE — нет, TRUE — да.
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP -- Время создания уведомления (московское время).
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    related_conversation_id UUID REFERENCES dialogs(id) ON DELETE SET NULL,
+    related_group_id UUID REFERENCES groups(id) ON DELETE SET NULL,
+    related_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    is_dismissed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Триггер: создаёт уведомление, когда добавляется новое сообщение.
-CREATE OR REPLACE FUNCTION create_notification_on_message()
+-- Таблица папок (folders)
+CREATE TABLE folders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    parent_folder_id UUID REFERENCES folders(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица связей папок с диалогами и группами (conversation_folders)
+CREATE TABLE conversation_folders (
+    folder_id UUID REFERENCES folders(id) ON DELETE CASCADE,
+    dialog_id UUID REFERENCES dialogs(id) ON DELETE CASCADE,
+    group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+    PRIMARY KEY (folder_id, dialog_id, group_id),
+    CHECK ((dialog_id IS NOT NULL AND group_id IS NULL) OR (dialog_id IS NULL AND group_id IS NOT NULL))
+);
+
+-- Таблица задач (tasks)
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    status VARCHAR(50) DEFAULT 'open',
+    priority INTEGER DEFAULT 3,
+    creator_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    assignee_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    due_date TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица логов задач (task_logs)
+CREATE TABLE task_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(255) NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Таблица тегов (tags)
+CREATE TABLE tags (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(50) UNIQUE NOT NULL,
+    color VARCHAR(7)
+);
+
+-- Таблица связей тегов и задач (task_tags)
+CREATE TABLE task_tags (
+    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,
+    tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (task_id, tag_id)
+);
+
+-- Индексы для оптимизации
+CREATE INDEX idx_dialog_participants_dialog_id ON dialog_participants(dialog_id);
+CREATE INDEX idx_group_participants_group_id ON group_participants(group_id);
+CREATE INDEX idx_messages_dialog_id ON messages(dialog_id);
+CREATE INDEX idx_messages_group_id ON messages(group_id);
+CREATE INDEX idx_messages_created_at ON messages(created_at);
+CREATE INDEX idx_messages_sender_id ON messages(sender_id);
+CREATE INDEX idx_messages_dialog_created ON messages(dialog_id, created_at);
+CREATE INDEX idx_messages_group_created ON messages(group_id, created_at);
+CREATE INDEX idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+CREATE INDEX idx_notifications_is_read ON notifications(is_read);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date);
+CREATE INDEX idx_conversation_folders_folder_id ON conversation_folders(folder_id);
+CREATE INDEX idx_task_tags_tag_id ON task_tags(tag_id);
+CREATE INDEX idx_message_reads_message_id ON message_reads(message_id);
+CREATE INDEX idx_message_mentions_message_id ON message_mentions(message_id);
+CREATE INDEX idx_group_roles_group_id ON group_roles(group_id);
+
+-- Функции и триггеры
+
+-- Установка имени отправителя
+CREATE OR REPLACE FUNCTION set_sender_username()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Создаём уведомление для всех участников чата, кроме отправителя,
-    -- и только если чат не замьючен для получателя.
-    INSERT INTO notifications (id, user_id, type, content, related_conversation_id, related_message_id)
-    SELECT gen_random_uuid(), cp.user_id, 'new_message',
-           'Новое сообщение от ' || NEW.sender_username, -- Используем сохраненное имя
-           NEW.conversation_id, NEW.id
-    FROM conversation_participants cp
-    WHERE cp.conversation_id = NEW.conversation_id
-      AND cp.user_id != NEW.sender_id
-      AND cp.is_muted = FALSE; -- Добавлено условие проверки is_muted
+    SELECT username INTO NEW.sender_username
+    FROM users
+    WHERE id = NEW.sender_id;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Удаляем старый триггер, если он существует (на всякий случай)
-DROP TRIGGER IF EXISTS increase_unread_count_trigger ON messages;
--- Удаляем старую функцию, если она существует
-DROP FUNCTION IF EXISTS increase_unread_count();
+CREATE TRIGGER set_sender_username_trigger
+BEFORE INSERT ON messages
+FOR EACH ROW
+EXECUTE FUNCTION set_sender_username();
 
--- Удаляем старый триггер, если он существует
-DROP TRIGGER IF EXISTS decrease_unread_count_trigger ON message_reads;
--- Удаляем старую функцию, если она существует
-DROP FUNCTION IF EXISTS decrease_unread_count();
+-- Уведомления о новом сообщении
+CREATE OR REPLACE FUNCTION create_notification_on_message()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (id, user_id, type, content, related_conversation_id, related_group_id, related_message_id)
+    SELECT gen_random_uuid(), dp.user_id, 'new_message',
+           'Новое сообщение от ' || NEW.sender_username,
+           NEW.dialog_id, NEW.group_id, NEW.id
+    FROM dialog_participants dp
+    WHERE dp.dialog_id = NEW.dialog_id
+      AND dp.user_id != NEW.sender_id
+      AND dp.is_muted = FALSE
+    UNION
+    SELECT gen_random_uuid(), gp.user_id, 'new_message',
+           'Новое сообщение от ' || NEW.sender_username,
+           NULL, NEW.group_id, NEW.id
+    FROM group_participants gp
+    WHERE gp.group_id = NEW.group_id
+      AND gp.user_id != NEW.sender_id
+      AND gp.is_muted = FALSE;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER create_notification_on_message_trigger
 AFTER INSERT ON messages
 FOR EACH ROW
 EXECUTE FUNCTION create_notification_on_message();
 
--- Дополнительно обновил триггер create_notification_on_message:
--- 1. Использует NEW.sender_username (так как оно теперь всегда заполняется триггером set_sender_username_trigger).
--- 2. Добавил проверку cp.is_muted = FALSE, чтобы не создавать уведомления для тех, кто замьютил чат.
-
--- Триггер: создаёт уведомление, когда пользователя упомянули в сообщении.
--- Например, если в сообщении написали @user2, user2 получит уведомление.
-CREATE OR REPLACE FUNCTION create_mention_notification()
+-- Обновление last_read_timestamp при прочтении сообщения
+CREATE OR REPLACE FUNCTION update_last_read_timestamp()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Создаём уведомление для упомянутого пользователя.
-    INSERT INTO notifications (id, user_id, type, content, related_conversation_id, related_message_id)
-    VALUES (
-        gen_random_uuid(),
-        NEW.user_id,
-        'mention',
-        'Вас упомянули в сообщении от ' || (SELECT username FROM users WHERE id = (SELECT sender_id FROM messages WHERE id = NEW.message_id)),
-        (SELECT conversation_id FROM messages WHERE id = NEW.message_id),
-        NEW.message_id
-    );
+    UPDATE dialog_participants
+    SET last_read_timestamp = NEW.read_at
+    WHERE dialog_id = (SELECT dialog_id FROM messages WHERE id = NEW.message_id)
+      AND user_id = NEW.user_id;
+
+    UPDATE group_participants
+    SET last_read_timestamp = NEW.read_at
+    WHERE group_id = (SELECT group_id FROM messages WHERE id = NEW.message_id)
+      AND user_id = NEW.user_id;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER create_mention_notification_trigger
-AFTER INSERT ON message_mentions
+CREATE TRIGGER update_last_read_timestamp_trigger
+AFTER INSERT ON message_reads
 FOR EACH ROW
-EXECUTE FUNCTION create_mention_notification();
+EXECUTE FUNCTION update_last_read_timestamp();
 
--- Триггер: создаёт уведомление, когда пользователя добавляют в групповой чат.
--- Например, если user1 добавили в чат "Друзья", он получит уведомление.
-CREATE OR REPLACE FUNCTION create_group_add_notification()
+-- Логирование изменений задач
+CREATE OR REPLACE FUNCTION log_task_changes()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Создаём уведомление для добавленного пользователя.
-    INSERT INTO notifications (id, user_id, type, content, related_conversation_id)
-    VALUES (
-        gen_random_uuid(),
-        NEW.user_id,
-        'group_add',
-        'Вас добавили в чат ' || (SELECT name FROM conversations WHERE id = NEW.conversation_id),
-        NEW.conversation_id
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER create_group_add_notification_trigger
-AFTER INSERT ON conversation_participants
-FOR EACH ROW
-EXECUTE FUNCTION create_group_add_notification();
-
-CREATE OR REPLACE FUNCTION add_reverse_contact()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Проверяем, существует ли уже обратная запись (чтобы избежать дубликатов)
-    IF NOT EXISTS (
-        SELECT 1 FROM contacts 
-        WHERE user_id = NEW.contact_id 
-          AND contact_id = NEW.user_id
-    ) THEN
-        -- Создаём обратную запись
-        INSERT INTO contacts (user_id, contact_id, created_at)
-        VALUES (NEW.contact_id, NEW.user_id, CURRENT_TIMESTAMP);
+    IF TG_OP = 'UPDATE' THEN
+        IF OLD.status != NEW.status THEN
+            INSERT INTO task_logs (task_id, user_id, action, old_value, new_value)
+            VALUES (NEW.id, NEW.assignee_id, 'status_change', OLD.status, NEW.status);
+        END IF;
+        IF OLD.description IS DISTINCT FROM NEW.description THEN
+            INSERT INTO task_logs (task_id, user_id, action, old_value, new_value)
+            VALUES (NEW.id, NEW.assignee_id, 'description_change', OLD.description, NEW.description);
+        END IF;
+        IF OLD.due_date IS DISTINCT FROM NEW.due_date THEN
+            INSERT INTO task_logs (task_id, user_id, action, old_value, new_value)
+            VALUES (NEW.id, NEW.assignee_id, 'due_date_change', OLD.due_date::TEXT, NEW.due_date::TEXT);
+        END IF;
     END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Создаём триггер, который срабатывает после вставки новой записи в `contacts`
-CREATE TRIGGER add_reverse_contact_trigger
-AFTER INSERT ON contacts
+CREATE TRIGGER log_task_changes_trigger
+AFTER UPDATE ON tasks
 FOR EACH ROW
-EXECUTE FUNCTION add_reverse_contact();
+EXECUTE FUNCTION log_task_changes();
 
--- Индексы: ускоряют поиск данных в таблицах.
--- Это как оглавление в книге — помогает быстрее найти нужную информацию.
-CREATE INDEX idx_conversation_participants_conversation_id ON conversation_participants(conversation_id); -- Для быстрого поиска участников по чату.
-CREATE INDEX idx_conversation_participants_user_id ON conversation_participants(user_id); -- Для быстрого поиска чатов пользователя.
-CREATE INDEX idx_messages_conversation_id ON messages(conversation_id); -- Для быстрого поиска сообщений в чате.
-CREATE INDEX idx_messages_sender_id ON messages(sender_id); -- Для быстрого поиска сообщений от конкретного пользователя.
-CREATE INDEX idx_message_reads_message_id ON message_reads(message_id); -- Для быстрого поиска, кто прочитал сообщение.
-CREATE INDEX idx_message_reads_user_id ON message_reads(user_id); -- Для быстрого поиска сообщений, прочитанных пользователем.
-CREATE INDEX idx_message_mentions_message_id ON message_mentions(message_id); -- Для быстрого поиска упоминаний в сообщении.
-CREATE INDEX idx_notifications_user_id ON notifications(user_id); -- Для быстрого поиска уведомлений пользователя.
-
--- Функция для автоматического заполнения sender_username при создании сообщения
-CREATE OR REPLACE FUNCTION set_sender_username()
+-- Автоматическое создание диалога при добавлении контакта
+CREATE OR REPLACE FUNCTION create_dialog_on_contact()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Получаем username отправителя из таблицы users
-    SELECT username INTO NEW.sender_username
-    FROM users
-    WHERE id = NEW.sender_id;
-    
+    IF NOT EXISTS (
+        SELECT 1 FROM dialogs
+        WHERE (user1_id = NEW.user_id AND user2_id = NEW.contact_id)
+           OR (user1_id = NEW.contact_id AND user2_id = NEW.user_id)
+    ) THEN
+        INSERT INTO dialogs (user1_id, user2_id)
+        VALUES (NEW.user_id, NEW.contact_id);
+        
+        INSERT INTO dialog_participants (dialog_id, user_id)
+        SELECT id, NEW.user_id FROM dialogs WHERE user1_id = NEW.user_id AND user2_id = NEW.contact_id
+        UNION
+        SELECT id, NEW.contact_id FROM dialogs WHERE user1_id = NEW.user_id AND user2_id = NEW.contact_id;
+    END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Создаём триггер, который срабатывает перед вставкой нового сообщения
-CREATE TRIGGER set_sender_username_trigger
-BEFORE INSERT ON messages
+CREATE TRIGGER create_dialog_on_contact_trigger
+AFTER INSERT ON contacts
 FOR EACH ROW
-EXECUTE FUNCTION set_sender_username();
+EXECUTE FUNCTION create_dialog_on_contact();
 
--- ======================================
--- Дополнения для функционала таск-трекера
--- ======================================
+-- Уведомления о назначении задачи
+CREATE OR REPLACE FUNCTION notify_task_assignment()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF (TG_OP = 'INSERT' AND NEW.assignee_id IS NOT NULL) OR 
+       (TG_OP = 'UPDATE' AND NEW.assignee_id IS NOT NULL AND OLD.assignee_id IS DISTINCT FROM NEW.assignee_id) THEN
+        INSERT INTO notifications (id, user_id, type, content, related_message_id)
+        VALUES (gen_random_uuid(), NEW.assignee_id, 'task_assigned',
+                'Вам назначена задача: ' || NEW.title, NULL);
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 1. Таблица задач
-CREATE TABLE tasks (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор задачи
-    title VARCHAR(255) NOT NULL,                          -- Краткое название задачи
-    description TEXT,                                     -- Подробное описание задачи
-    status VARCHAR(50) DEFAULT 'open',                    -- Статус задачи (например, open, in_progress, done, canceled)
-    priority INTEGER DEFAULT 3,                           -- Приоритет задачи (например, 1 – высокий, 5 – низкий)
-    creator_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- Кто создал задачу
-    assignee_id UUID REFERENCES users(id) ON DELETE SET NULL, -- Исполнитель задачи
-    due_date TIMESTAMP,                                   -- Срок выполнения задачи
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,       -- Время создания задачи (московское время)
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время последнего обновления задачи (московское время)
-);
+CREATE TRIGGER notify_task_assignment_trigger
+AFTER INSERT OR UPDATE ON tasks
+FOR EACH ROW
+EXECUTE FUNCTION notify_task_assignment();
 
--- 2. Таблица комментариев к задачам
-CREATE TABLE task_comments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор комментария
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу, к которой оставлен комментарий
-    commenter_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- Пользователь, оставивший комментарий
-    comment TEXT NOT NULL,                                -- Текст комментария
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время оставления комментария (московское время)
-);
+-- Обновление unread_count при добавлении сообщения
+CREATE OR REPLACE FUNCTION update_unread_count_on_message()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.dialog_id IS NOT NULL THEN
+        UPDATE dialog_participants
+        SET unread_count = unread_count + 1
+        WHERE dialog_id = NEW.dialog_id AND user_id != NEW.sender_id;
+    ELSIF NEW.group_id IS NOT NULL THEN
+        UPDATE group_participants
+        SET unread_count = unread_count + 1
+        WHERE group_id = NEW.group_id AND user_id != NEW.sender_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 3. Таблица файлов (вложений) к задачам
-CREATE TABLE task_attachments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),       -- Уникальный идентификатор файла
-    task_id UUID REFERENCES tasks(id) ON DELETE CASCADE,  -- Ссылка на задачу, к которой прикреплён файл
-    uploader_id UUID REFERENCES users(id) ON DELETE SET NULL, -- Пользователь, загрузивший файл
-    file_name VARCHAR(255) NOT NULL,                      -- Имя файла
-    file_path VARCHAR(500) NOT NULL,                      -- Путь к файлу на сервере или в облаке
-    file_type VARCHAR(255),                               -- Тип файла (например, image, document и т.д.)
-    file_size INTEGER,                                    -- Размер файла в байтах
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP        -- Время загрузки файла (московское время)
-);
+CREATE TRIGGER update_unread_count_on_message_trigger
+AFTER INSERT ON messages
+FOR EACH ROW
+EXECUTE FUNCTION update_unread_count_on_message();
 
--- 4. Таблица логов изменений (истории задач)
-CREATE TABLE task_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    action VARCHAR(100) NOT NULL,
-    old_value VARCHAR(255),
-    new_value VARCHAR(255),
-    changed_by UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
-    changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+-- Сброс unread_count при прочтении сообщения
+CREATE OR REPLACE FUNCTION reset_unread_count_on_read()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM messages WHERE id = NEW.message_id AND dialog_id IS NOT NULL) THEN
+        UPDATE dialog_participants
+        SET unread_count = 0
+        WHERE dialog_id = (SELECT dialog_id FROM messages WHERE id = NEW.message_id)
+          AND user_id = NEW.user_id;
+    ELSIF EXISTS (SELECT 1 FROM messages WHERE id = NEW.message_id AND group_id IS NOT NULL) THEN
+        UPDATE group_participants
+        SET unread_count = 0
+        WHERE group_id = (SELECT group_id FROM messages WHERE id = NEW.message_id)
+          AND user_id = NEW.user_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- 5. Триггер для автоматического обновления поля updated_at при изменении задачи
+CREATE TRIGGER-reset_unread_count_on_read_trigger
+AFTER INSERT ON message_reads
+FOR EACH ROW
+EXECUTE FUNCTION reset_unread_count_on_read();
 
--- Функция обновления поля updated_at
+-- Обновление updated_at в таблице users
+CREATE OR REPLACE FUNCTION update_user_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_user_updated_at_trigger
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION update_user_updated_at();
+
+-- Обновление updated_at в таблице tasks
 CREATE OR REPLACE FUNCTION update_task_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -314,65 +425,51 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Триггер для таблицы tasks
 CREATE TRIGGER update_task_updated_at_trigger
 BEFORE UPDATE ON tasks
 FOR EACH ROW
 EXECUTE FUNCTION update_task_updated_at();
 
--- 6. Дополнительные индексы для ускорения выборок по задачам
-CREATE INDEX idx_tasks_status ON tasks(status);
-CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
-CREATE INDEX idx_tasks_due_date ON tasks(due_date);
-
--- ======================================
--- Конец дополнений для таск-трекера
--- ======================================
-
--- Создание таблицы pinned_messages
-CREATE TABLE pinned_messages (
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    pinned_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
-    pinned_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (conversation_id, message_id)
-);
-
--- Пример индекса для pinned_messages
-CREATE INDEX idx_pinned_messages_conversation_pinned_at ON pinned_messages(conversation_id, pinned_at DESC);
-
--- Пример индекса для messages (если еще нет)
-CREATE INDEX idx_messages_conversation_created_at ON messages(conversation_id, created_at DESC);
-
--- ======================================
-
--- Дополнения для аватаров пользователей
--- ======================================
-
--- Таблица user_avatars: хранит информацию об аватарах пользователей.
-CREATE TABLE user_avatars (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, -- Ссылка на пользователя, которому принадлежит аватар. Если пользователь удален, аватар тоже удаляется.
-    file_name VARCHAR(255) NOT NULL,                                  -- Оригинальное имя файла аватара.
-    file_path VARCHAR(500) NOT NULL UNIQUE,                           -- Путь к файлу аватара на сервере (уникальный).
-    file_type VARCHAR(100),                                           -- MIME-тип файла (например, 'image/jpeg', 'image/png').
-    file_size INTEGER,                                                -- Размер файла в байтах.
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,    -- Время загрузки аватара.
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP     -- Время последнего обновления аватара.
-);
-
--- Триггер для автоматического обновления updated_at при изменении аватара
-CREATE OR REPLACE FUNCTION update_avatar_updated_at()
+-- Уведомления о добавлении в группу
+CREATE OR REPLACE FUNCTION notify_group_add()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
+    INSERT INTO notifications (id, user_id, type, content, related_group_id)
+    VALUES (
+        gen_random_uuid(),
+        NEW.user_id,
+        'group_add',
+        'Вас добавили в группу ' || (SELECT name FROM groups WHERE id = NEW.group_id),
+        NEW.group_id
+    );
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_avatar_updated_at_trigger
-BEFORE UPDATE ON user_avatars
+CREATE TRIGGER notify_group_add_trigger
+AFTER INSERT ON group_participants
 FOR EACH ROW
-EXECUTE FUNCTION update_avatar_updated_at();
+EXECUTE FUNCTION notify_group_add();
 
--- Индекс для быстрого поиска аватара по пути файла (может быть полезно)
-CREATE INDEX idx_user_avatars_file_path ON user_avatars(file_path);
+-- Уведомления о создании задачи
+CREATE OR REPLACE FUNCTION notify_task_creation()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.creator_id IS NOT NULL AND NEW.assignee_id IS NOT NULL AND NEW.creator_id != NEW.assignee_id THEN
+        INSERT INTO notifications (id, user_id, type, content, related_message_id)
+        VALUES (
+            gen_random_uuid(),
+            NEW.assignee_id,
+            'task_created',
+            'Создана новая задача: ' || NEW.title || ' от ' || (SELECT username FROM users WHERE id = NEW.creator_id),
+            NULL
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER notify_task_creation_trigger
+AFTER INSERT ON tasks
+FOR EACH ROW
+EXECUTE FUNCTION notify_task_creation();

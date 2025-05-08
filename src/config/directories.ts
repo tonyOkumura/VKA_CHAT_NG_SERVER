@@ -2,12 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 export function setupDirectories(): void {
-    const uploadsDir = path.join(__dirname, '..', 'Uploads');
+    const baseUploadsDir = path.join(process.cwd(), 'uploads');
+
     const directories = [
-        uploadsDir,
-        path.join(uploadsDir, 'avatars'),
-        path.join(uploadsDir, 'messages'),
-        path.join(uploadsDir, 'tasks'),
+        baseUploadsDir,
+        path.join(baseUploadsDir, 'avatars'),
+        path.join(baseUploadsDir, 'messages'),
+        path.join(baseUploadsDir, 'tasks'),
     ];
 
     directories.forEach((dir) => {
