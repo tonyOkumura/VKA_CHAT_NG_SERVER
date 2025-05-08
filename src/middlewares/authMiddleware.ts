@@ -1,23 +1,42 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
+// (Опционально) import { Pool } from 'pg'; // Для проверки is_online
 
-export const verifyToken = (req: Request, res: Response, next: NextFunction): void => {
-    const token = req.headers.authorization?.split(' ')[1];
+// Интерфейс для декодированного токена
+interface TokenPayload extends JwtPayload {
+  id: string;
+  username: string;
+}
 
-    if (!token) {
-        console.warn('No token provided'); // Log warning
-        res.status(403).json({ error: 'No token provided' });
-        return;
+export const authMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+  // Извлечение токена
+  const token = req.headers.authorization?.split(' ')[1];
+
+  if (!token) {
+    console.warn('No token provided');
+    res.status(403).json({ error: 'No token provided' });
+    return;
+  }
+
+  try {
+    // Верификация токена
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'worisecretkey') as TokenPayload;
+
+    // Добавление req.user
+    req.user = { id: decoded.id, username: decoded.username };
+
+    // Логирование успешной верификации (опционально)
+    console.info(`Token verified for user ${decoded.username}`);
+
+    next();
+  } catch (err) {
+    // Обработка ошибок
+    const error = err as Error;
+    console.error(`Token verification failed - ${error.message}`);
+    if (error.name === 'TokenExpiredError') {
+      res.status(401).json({ error: 'Token expired' });
+    } else {
+      res.status(401).json({ error: 'Invalid token' });
     }
-
-    try {
-        const decoded = jwt.verify(token,  'worisecretkey');
-        // const decoded = jwt.verify(token, process.env.JWT_TOKEN || 'worisecretkey');
-        req.user = decoded as { id: string };
-        
-        next();
-    } catch (e) {
-        console.error(`Invalid token - ${(e as Error).message}`); // Log error
-        res.status(401).json({ error: 'Invalid token' });
-    }
+  }
 };

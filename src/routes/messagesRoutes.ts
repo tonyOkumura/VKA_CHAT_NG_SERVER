@@ -1,30 +1,37 @@
 import { Router } from 'express';
-import { verifyToken } from '../middlewares/authMiddleware';
+import { authMiddleware } from '../middlewares/authMiddleware';
 import {
-    fetchAllMessagesByConversationId,
+    fetchAllMessages,
     editMessage,
     deleteMessage,
     forwardMessages,
     uploadMessageFileAndCreateMessage,
     downloadMessageFile,
-    getMessageFileInfo
+    getMessageFileInfo,
 } from '../controllers/messagesController';
 import { uploadMiddleware } from '../services/fileService';
 
 const router = Router();
 
-router.get('/', verifyToken, fetchAllMessagesByConversationId);
+// Fetch messages for a dialog or group
+router.post('/fetch', authMiddleware, fetchAllMessages);
 
-router.post('/forward', verifyToken, forwardMessages);
+// Forward messages to dialogs or groups
+router.post('/forward', authMiddleware, forwardMessages);
 
-router.patch('/', verifyToken, editMessage);
+// Edit a message
+router.patch('/', authMiddleware, editMessage);
 
-router.delete('/', verifyToken, deleteMessage);
+// Delete a message
+router.delete('/', authMiddleware, deleteMessage);
 
-router.post('/files/upload', verifyToken, uploadMiddleware.single('file'), uploadMessageFileAndCreateMessage);
+// Upload a file and create a message
+router.post('/files/upload', authMiddleware, uploadMiddleware.single('file'), uploadMessageFileAndCreateMessage);
 
-router.post('/files/download_body', verifyToken, downloadMessageFile);
+// Download a message file
+router.post('/files/download_body', authMiddleware, downloadMessageFile);
 
-router.post('/files/info', verifyToken, getMessageFileInfo);
+// Get message file info
+router.post('/files/info', authMiddleware, getMessageFileInfo);
 
 export default router;

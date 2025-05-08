@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
+import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import knex from '../lib/knex';
 import type { Knex as KnexType } from 'knex';
-import path from 'path';
-import fs from 'fs';
 import * as socketService from '../services/socketService';
 import * as fileService from '../services/fileService';
 import { getUserDetailsWithAvatar } from '../lib/dbHelpers';
@@ -36,7 +36,7 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
                 priority: priority || 3,
                 creator_id,
                 assignee_id,
-                due_date
+                due_date,
             })
             .returning('*');
 
@@ -46,10 +46,10 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
 
         const eventPayload = {
             ...newTask,
-            creator_username: creatorDetails.username,
-            assignee_username: assigneeDetails.username,
-            creatorAvatarPath: creatorDetails.avatarPath,
-            assigneeAvatarPath: assigneeDetails.avatarPath,
+            creator_username: creatorDetails?.username || null,
+            assignee_username: assigneeDetails?.username || null,
+            creatorAvatarPath: creatorDetails?.avatarPath || null,
+            assigneeAvatarPath: assigneeDetails?.avatarPath || null,
             due_date: newTask.due_date ? new Date(newTask.due_date).toISOString() : null,
             created_at: new Date(newTask.created_at).toISOString(),
             updated_at: new Date(newTask.updated_at).toISOString(),
@@ -68,7 +68,6 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
     }
 };
 
-// Получение списка задач
 export const getTasks = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { status, search, page = '1', limit = '10' } = req.query;
@@ -92,16 +91,13 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
                 't.*',
                 'creator.username as creator_username',
                 'assignee.username as assignee_username',
-                'creator_avatar.file_path as creatorAvatarPath',
-                'assignee_avatar.file_path as assigneeAvatarPath'
+                'creator.avatar_path as creatorAvatarPath',
+                'assignee.avatar_path as assigneeAvatarPath'
             )
             .leftJoin('users as creator', 't.creator_id', 'creator.id')
             .leftJoin('users as assignee', 't.assignee_id', 'assignee.id')
-            .leftJoin('user_avatars as creator_avatar', 't.creator_id', 'creator_avatar.user_id')
-            .leftJoin('user_avatars as assignee_avatar', 't.assignee_id', 'assignee_avatar.user_id')
-            .where(function() {
-                this.where('t.creator_id', userId)
-                    .orWhere('t.assignee_id', userId);
+            .where(function () {
+                this.where('t.creator_id', userId).orWhere('t.assignee_id', userId);
             });
 
         if (status) {
@@ -113,15 +109,14 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
         }
 
         if (search) {
-            query.andWhere(function() {
-                this.where('t.title', 'ILIKE', `%${search}%`)
-                    .orWhere('t.description', 'ILIKE', `%${search}%`);
+            query.andWhere(function () {
+                this.where('t.title', 'ILIKE', `%${search}%`).orWhere('t.description', 'ILIKE', `%${search}%`);
             });
         }
 
         const tasksData = await query.orderBy('t.created_at', 'desc').limit(limitNum).offset(offset);
 
-        const tasks = tasksData.map(task => ({
+        const tasks = tasksData.map((task) => ({
             ...task,
             due_date: task.due_date ? new Date(task.due_date).toISOString() : null,
             created_at: new Date(task.created_at).toISOString(),
@@ -129,14 +124,15 @@ export const getTasks = async (req: Request, res: Response): Promise<void> => {
         }));
 
         res.status(200).json(tasks);
-        console.log(`Получен список задач для пользователя ${userId} с фильтрами: status=${status}, search=${search}, page=${page}, limit=${limit}`);
+        console.log(
+            `Получен список задач для пользователя ${userId} с фильтрами: status=${status}, search=${search}, page=${page}, limit=${limit}`
+        );
     } catch (error: any) {
         console.error('Ошибка при получении списка задач:', error);
         res.status(500).json({ error: 'Не удалось получить список задач' });
     }
 };
 
-// Получение задачи по ID
 export const getTaskById = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -157,13 +153,11 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
                 't.*',
                 'creator.username as creator_username',
                 'assignee.username as assignee_username',
-                'creator_avatar.file_path as creatorAvatarPath',
-                'assignee_avatar.file_path as assigneeAvatarPath'
+                'creator.avatar_path as creatorAvatarPath',
+                'assignee.avatar_path as assigneeAvatarPath'
             )
             .leftJoin('users as creator', 't.creator_id', 'creator.id')
             .leftJoin('users as assignee', 't.assignee_id', 'assignee.id')
-            .leftJoin('user_avatars as creator_avatar', 't.creator_id', 'creator_avatar.user_id')
-            .leftJoin('user_avatars as assignee_avatar', 't.assignee_id', 'assignee_avatar.user_id')
             .where('t.id', taskId)
             .first();
 
@@ -175,7 +169,9 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
 
         if (task.creator_id !== userId && task.assignee_id !== userId) {
             res.status(403).json({ error: 'Доступ к этой задаче запрещен.' });
-            console.log(`Пользователь ${userId} пытался получить доступ к задаче ${taskId}, к которой не имеет отношения.`);
+            console.log(
+                `Пользователь ${userId} пытался получить доступ к задаче ${taskId}, к которой не имеет отношения.`
+            );
             return;
         }
 
@@ -198,8 +194,11 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
     }
 };
 
-// Helper to check if user is creator or assignee of a task
-const isUserTaskParticipant = async (userId: string, taskId: string, trx?: KnexType | KnexType.Transaction): Promise<boolean> => {
+export const isUserTaskParticipant = async (
+    userId: string,
+    taskId: string,
+    trx?: KnexType | KnexType.Transaction
+): Promise<boolean> => {
     const db = trx || knex;
     const task = await db('tasks')
         .select('creator_id', 'assignee_id')
@@ -208,7 +207,6 @@ const isUserTaskParticipant = async (userId: string, taskId: string, trx?: KnexT
     return !!task && (task.creator_id === userId || task.assignee_id === userId);
 };
 
-// Обновление задачи
 export const updateTask = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -231,7 +229,7 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
 
     const allowedUpdates = ['title', 'description', 'status', 'priority', 'assignee_id', 'due_date'];
     const updatesToApply: { [key: string]: any } = {};
-    const logEntriesData: Array<{ action: string, old_value: string | null, new_value: string | null }> = [];
+    const logEntriesData: Array<{ action: string; old_value: string | null; new_value: string | null }> = [];
 
     if (updates.status && !validStatuses.includes(updates.status)) {
         res.status(400).json({ error: `Статус должен быть одним из: ${validStatuses.join(', ')}.` });
@@ -242,7 +240,7 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
         return;
     }
 
-    Object.keys(updates).forEach(key => {
+    Object.keys(updates).forEach((key) => {
         if (allowedUpdates.includes(key)) {
             updatesToApply[key] = updates[key];
         }
@@ -256,7 +254,7 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
     try {
         const resultTask = await knex.transaction(async (trx) => {
             const currentTask = await trx('tasks')
-                .select('*') 
+                .select('*')
                 .where('id', taskId)
                 .first();
 
@@ -265,10 +263,10 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
             }
 
             if (currentTask.creator_id !== userId && currentTask.assignee_id !== userId) {
-                 throw { status: 403, message: 'Вы не можете обновлять эту задачу.' };
+                throw { status: 403, message: 'Вы не можете обновлять эту задачу.' };
             }
 
-            Object.keys(updatesToApply).forEach(key => {
+            Object.keys(updatesToApply).forEach((key) => {
                 const oldValue = currentTask[key];
                 const newValue = updatesToApply[key];
                 const oldValueComparable = oldValue instanceof Date ? oldValue.toISOString() : oldValue;
@@ -282,66 +280,72 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
                     logEntriesData.push({
                         action: actionText,
                         old_value: oldValueComparable === undefined ? null : String(oldValueComparable ?? null),
-                        new_value: newValueComparable === undefined ? null : String(newValueComparable ?? null)
+                        new_value: newValueComparable === undefined ? null : String(newValueComparable ?? null),
                     });
                 }
             });
+
             if (Object.keys(updatesToApply).length > 0 && logEntriesData.length === 0) {
-                 const creatorDetailsNoChange = await getUserDetailsWithAvatar(currentTask.creator_id, trx);
-                 const assigneeDetailsNoChange = await getUserDetailsWithAvatar(currentTask.assignee_id, trx);
-                 return {
+                const creatorDetailsNoChange = await getUserDetailsWithAvatar(currentTask.creator_id, trx);
+                const assigneeDetailsNoChange = await getUserDetailsWithAvatar(currentTask.assignee_id, trx);
+                return {
                     ...currentTask,
-                    creator_username: creatorDetailsNoChange.username,
-                    assignee_username: assigneeDetailsNoChange.username,
-                    creatorAvatarPath: creatorDetailsNoChange.avatarPath,
-                    assigneeAvatarPath: assigneeDetailsNoChange.avatarPath,
+                    creator_username: creatorDetailsNoChange?.username || null,
+                    assignee_username: assigneeDetailsNoChange?.username || null,
+                    creatorAvatarPath: creatorDetailsNoChange?.avatarPath || null,
+                    assigneeAvatarPath: assigneeDetailsNoChange?.avatarPath || null,
                     due_date: currentTask.due_date ? new Date(currentTask.due_date).toISOString() : null,
                     created_at: new Date(currentTask.created_at).toISOString(),
                     updated_at: new Date(currentTask.updated_at).toISOString(),
-                    _no_changes_applied: true 
+                    _no_changes_applied: true,
                 };
             }
+
             if (logEntriesData.length > 0) {
-                updatesToApply.updated_at = new Date(); 
+                updatesToApply.updated_at = new Date();
                 await trx('tasks')
                     .where('id', taskId)
                     .update(updatesToApply);
-                const logInserts = logEntriesData.map(log => ({
+                const logInserts = logEntriesData.map((log) => ({
                     task_id: taskId,
                     action: log.action,
                     old_value: log.old_value,
                     new_value: log.new_value,
-                    changed_by: userId
+                    changed_by: userId,
                 }));
                 await trx('task_logs').insert(logInserts);
             }
-            const finalTaskData = await trx('tasks').where('id', taskId).first();
-            if (!finalTaskData) throw { status: 500, message: 'Ошибка получения обновленной задачи.'};
+
+            const finalTaskData = await trx('tasks')
+                .where('id', taskId)
+                .first();
+            if (!finalTaskData) throw { status: 500, message: 'Ошибка получения обновленной задачи.' };
             const creatorDetails = await getUserDetailsWithAvatar(finalTaskData.creator_id, trx);
             const assigneeDetails = await getUserDetailsWithAvatar(finalTaskData.assignee_id, trx);
             return {
                 ...finalTaskData,
-                creator_username: creatorDetails.username,
-                assignee_username: assigneeDetails.username,
-                creatorAvatarPath: creatorDetails.avatarPath,
-                assigneeAvatarPath: assigneeDetails.avatarPath,
+                creator_username: creatorDetails?.username || null,
+                assignee_username: assigneeDetails?.username || null,
+                creatorAvatarPath: creatorDetails?.avatarPath || null,
+                assigneeAvatarPath: assigneeDetails?.avatarPath || null,
                 due_date: finalTaskData.due_date ? new Date(finalTaskData.due_date).toISOString() : null,
                 created_at: new Date(finalTaskData.created_at).toISOString(),
                 updated_at: new Date(finalTaskData.updated_at).toISOString(),
             };
         });
+
         if (resultTask._no_changes_applied) {
             res.status(200).json({ message: 'Нет изменений для применения.', task: resultTask });
             console.log(`Task ${taskId} update requested by ${userId}, but no actual changes detected.`);
         } else if (resultTask) {
-            const changerDetails = await getUserDetailsWithAvatar(userId); 
+            const changerDetails = await getUserDetailsWithAvatar(userId);
             const eventPayload = {
                 ...resultTask,
-                change_details: logEntriesData, 
+                change_details: logEntriesData,
                 changed_by: {
-                    user_id: changerDetails.id,
-                    username: changerDetails.username,
-                    avatarPath: changerDetails.avatarPath
+                    user_id: changerDetails?.id || userId,
+                    username: changerDetails?.username || null,
+                    avatarPath: changerDetails?.avatarPath || null,
                 },
             };
             const taskRoom = `task_${taskId}`;
@@ -355,14 +359,19 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
     } catch (error: any) {
         console.error(`Ошибка при обновлении задачи ID ${taskId}:`, error);
         const status = error.status || 500;
-        const message = error.message || (error.code === '22P02' ? 'Неверный формат ID задачи или исполнителя.' : error.code === '23503' ? 'Указанный исполнитель не найден.' : 'Не удалось обновить задачу');
+        const message =
+            error.message ||
+            (error.code === '22P02'
+                ? 'Неверный формат ID задачи или исполнителя.'
+                : error.code === '23503'
+                  ? 'Указанный исполнитель не найден.'
+                  : 'Не удалось обновить задачу');
         if (!res.headersSent) {
             res.status(status).json({ error: message });
         }
     }
 };
 
-// Удаление задачи
 export const deleteTask = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -395,22 +404,24 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
                 .select('id', 'file_path')
                 .where('task_id', taskId);
 
-            // Delete files from disk first
             for (const attachment of attachments) {
                 try {
                     await fileService.deleteFileFromDiskByDbPath(attachment.file_path);
                     console.log(`Task attachment file ${attachment.file_path} deleted from disk.`);
                 } catch (diskError: any) {
-                    // Log error but continue to delete DB records
                     console.error(`Error deleting task attachment file ${attachment.file_path} from disk:`, diskError);
                 }
             }
-            
-            // Cascade deletes are not explicitly set up for task_logs, task_comments, task_attachments in the provided SQL,
-            // so manually delete them before deleting the task.
-            await trx('task_logs').where('task_id', taskId).del();
-            await trx('task_comments').where('task_id', taskId).del();
-            await trx('task_attachments').where('task_id', taskId).del();
+
+            await trx('task_logs')
+                .where('task_id', taskId)
+                .del();
+            await trx('task_comments')
+                .where('task_id', taskId)
+                .del();
+            await trx('task_attachments')
+                .where('task_id', taskId)
+                .del();
 
             const deleteResult = await trx('tasks')
                 .where('id', taskId)
@@ -428,18 +439,17 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
 
         res.status(200).json({ message: 'Задача и все связанные данные успешно удалены.', taskId: taskId });
         console.log(`Задача ID: ${taskId} успешно удалена пользователем ${userId}.`);
-
     } catch (error: any) {
         console.error(`Ошибка при удалении задачи ID ${taskId}:`, error);
         const status = error.status || 500;
-        const message = error.message || (error.code === '22P02' ? 'Неверный формат ID задачи.' : 'Не удалось удалить задачу');
+        const message =
+            error.message || (error.code === '22P02' ? 'Неверный формат ID задачи.' : 'Не удалось удалить задачу');
         if (!res.headersSent) {
             res.status(status).json({ error: message });
         }
     }
 };
 
-// Добавление комментария
 export const addTaskComment = async (req: Request, res: Response): Promise<void> => {
     const commenter_id = req.user?.id;
     const { taskId } = req.params;
@@ -464,7 +474,7 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
             res.status(404).json({ error: 'Задача не найдена.' });
             return;
         }
-        
+
         if (taskData.creator_id !== commenter_id && taskData.assignee_id !== commenter_id) {
             res.status(403).json({ error: 'Вы не можете комментировать эту задачу.' });
             return;
@@ -474,18 +484,18 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
             .insert({
                 task_id: taskId,
                 commenter_id,
-                comment
+                comment,
             })
             .returning('*');
-        
+
         const newComment = insertedComments[0];
 
         const commenterDetails = await getUserDetailsWithAvatar(newComment.commenter_id);
         const eventPayload = {
             ...newComment,
-            commenter_username: commenterDetails.username,
-            commenterAvatarPath: commenterDetails.avatarPath,
-            created_at: new Date(newComment.created_at).toISOString()
+            commenter_username: commenterDetails?.username || null,
+            commenterAvatarPath: commenterDetails?.avatarPath || null,
+            created_at: new Date(newComment.created_at).toISOString(),
         };
         const taskRoom = `task_${taskId}`;
         socketService.emitToRoom(taskRoom, 'newTaskComment', eventPayload);
@@ -494,9 +504,9 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
         console.log(`Комментарий к задаче ${taskId} добавлен пользователем ${commenter_id}`);
     } catch (error: any) {
         console.error(`Ошибка при добавлении комментария к задаче ${taskId}:`, error);
-        if (error.code === '23503') { // foreign key violation
+        if (error.code === '23503') {
             res.status(404).json({ error: 'Задача или пользователь не найдены.' });
-        } else if (error.code === '22P02') { // invalid input syntax for type uuid
+        } else if (error.code === '22P02') {
             res.status(400).json({ error: 'Неверный формат ID задачи.' });
         } else {
             res.status(500).json({ error: 'Не удалось добавить комментарий' });
@@ -504,7 +514,6 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
     }
 };
 
-// Получение комментариев
 export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -528,24 +537,19 @@ export const getTaskComments = async (req: Request, res: Response): Promise<void
             res.status(404).json({ error: 'Задача не найдена.' });
             return;
         }
-        
+
         if (taskData.creator_id !== userId && taskData.assignee_id !== userId) {
             res.status(403).json({ error: 'Вы не можете просматривать комментарии к этой задаче.' });
             return;
         }
 
         const commentsData = await knex('task_comments as tc')
-            .select(
-                'tc.*',
-                'u.username as commenter_username',
-                'ua.file_path as commenterAvatarPath'
-            )
+            .select('tc.*', 'u.username as commenter_username', 'u.avatar_path as commenterAvatarPath')
             .leftJoin('users as u', 'tc.commenter_id', 'u.id')
-            .leftJoin('user_avatars as ua', 'tc.commenter_id', 'ua.user_id')
             .where('tc.task_id', taskId)
             .orderBy('tc.created_at', 'asc');
 
-        const comments = commentsData.map(comment => ({
+        const comments = commentsData.map((comment) => ({
             ...comment,
             created_at: new Date(comment.created_at).toISOString(),
         }));
@@ -562,20 +566,19 @@ export const getTaskComments = async (req: Request, res: Response): Promise<void
     }
 };
 
-// Добавление вложения
 export const addTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const uploader_id = req.user?.id;
     const { taskId } = req.params;
     const file = req.file;
 
     if (!uploader_id) {
-        if (file) fs.unlinkSync(file.path);
+        if (file) await fs.unlink(file.path);
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
 
     if (!taskId) {
-        if (file) fs.unlinkSync(file.path);
+        if (file) await fs.unlink(file.path);
         res.status(400).json({ error: 'Не указан ID задачи.' });
         return;
     }
@@ -588,45 +591,50 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
     let client: KnexType.Transaction | null = null;
     try {
         client = await knex.transaction();
-        const taskResult = await client('tasks')
+        const task = await client('tasks')
             .select('creator_id', 'assignee_id')
             .where('id', taskId)
             .first();
-        if (taskResult.length === 0) {
+
+        if (!task) {
             await client.rollback();
-            fs.unlinkSync(file.path);
+            await fs.unlink(file.path);
             res.status(404).json({ error: 'Задача не найдена.' });
             console.log(`Попытка добавить вложение к несуществующей задаче ID: ${taskId} пользователем ${uploader_id}`);
             return;
         }
-        const task = taskResult[0];
+
         if (task.creator_id !== uploader_id && task.assignee_id !== uploader_id) {
             await client.rollback();
-            fs.unlinkSync(file.path);
+            await fs.unlink(file.path);
             res.status(403).json({ error: 'У вас нет прав добавлять вложения к этой задаче.' });
-            console.log(`Пользователь ${uploader_id} пытался добавить вложение к задаче ${taskId}, к которой не имеет отношения.`);
+            console.log(
+                `Пользователь ${uploader_id} пытался добавить вложение к задаче ${taskId}, к которой не имеет отношения.`
+            );
             return;
         }
 
-        const { originalname, path: filePath, mimetype, size } = file;
-        if (size > 10 * 1024 * 1024) { // 10 MB limit
+        const fileResult = await fileService.storeUploadedFile(file, 'tasks');
+
+        if (fileResult.size > 10 * 1024 * 1024) {
             await client.rollback();
-            fs.unlinkSync(filePath);
+            await fileService.deleteFileFromDiskByDbPath(fileResult.filePathInDb);
             res.status(400).json({ error: 'Размер файла превышает 10 МБ.' });
             return;
         }
 
-        const insertResult = await client('task_attachments')
+        const insertedAttachments = await client('task_attachments')
             .insert({
                 task_id: taskId,
-                file_name: originalname,
-                file_path: filePath,
-                file_type: mimetype,
-                file_size: size,
-                uploader_id
+                file_name: fileResult.originalName,
+                file_path: fileResult.filePathInDb,
+                file_type: fileResult.mimeType,
+                file_size: fileResult.size,
+                uploader_id,
             })
             .returning('*');
-        const newAttachment = insertResult[0];
+
+        const newAttachment = insertedAttachments[0];
 
         await client.commit();
 
@@ -639,7 +647,7 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
             file_size_bytes: newAttachment.file_size,
             uploaded_at: new Date(newAttachment.created_at).toISOString(),
             uploaded_by_id: newAttachment.uploader_id,
-            uploaded_by_username: uploaderDetails.username,
+            uploaded_by_username: uploaderDetails?.username || null,
         };
         const attachmentTargetRoom = `task_${taskId}`;
         socketService.emitToRoom(attachmentTargetRoom, 'newTaskAttachment', eventPayload);
@@ -651,7 +659,9 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
             await client.rollback();
             console.error(`Транзакция добавления вложения к задаче ${taskId} отменена из-за ошибки.`);
         }
-        if (file) fs.unlinkSync(file.path);
+        if (file) {
+            await fs.unlink(file.path).catch((e) => console.error(`Failed to cleanup file ${file.path}:`, e));
+        }
         console.error(`Ошибка при добавлении вложения к задаче ${taskId}:`, error);
         if (error.code === '22P02') {
             res.status(400).json({ error: 'Неверный формат ID задачи.' });
@@ -663,7 +673,6 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
     }
 };
 
-// Получение вложений
 export const getTaskAttachments = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -678,35 +687,33 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
         return;
     }
 
-    console.log('get taskAtaments ')
-
     try {
-        const taskResult = await knex('tasks')
+        const task = await knex('tasks')
             .select('creator_id', 'assignee_id')
             .where('id', taskId)
             .first();
-        if (taskResult.length === 0) {
+
+        if (!task) {
             res.status(404).json({ error: 'Задача не найдена.' });
             console.log(`Попытка получить вложения несуществующей задачи ID: ${taskId} пользователем ${userId}`);
             return;
         }
-        const task = taskResult[0];
+
         if (task.creator_id !== userId && task.assignee_id !== userId) {
             res.status(403).json({ error: 'У вас нет прав на просмотр вложений этой задачи.' });
-            console.log(`Пользователь ${userId} пытался получить вложения задачи ${taskId}, к которой не имеет отношения.`);
+            console.log(
+                `Пользователь ${userId} пытался получить вложения задачи ${taskId}, к которой не имеет отношения.`
+            );
             return;
         }
 
-        const result = await knex('task_attachments as ta')
-            .select(
-                'ta.*',
-                'u.username as uploaded_by_username'
-            )
+        const attachmentsData = await knex('task_attachments as ta')
+            .select('ta.*', 'u.username as uploaded_by_username')
             .leftJoin('users as u', 'ta.uploader_id', 'u.id')
             .where('ta.task_id', taskId)
             .orderBy('ta.created_at', 'asc');
 
-        const attachments = result.map(attachment => ({
+        const attachments = attachmentsData.map((attachment) => ({
             id: attachment.id,
             task_id: attachment.task_id,
             file_name: attachment.file_name,
@@ -715,6 +722,7 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
             uploaded_at: new Date(attachment.created_at).toISOString(),
             uploaded_by_id: attachment.uploader_id,
             uploaded_by_username: attachment.uploaded_by_username,
+            download_url: `/api/tasks/${taskId}/attachments/download/${attachment.id}`,
         }));
 
         res.status(200).json(attachments);
@@ -729,10 +737,9 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
     }
 };
 
-// Удаление вложения
 export const deleteTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { taskId, attachmentId } = req.body;
+    const { taskId, attachmentId } = req.params;
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
@@ -740,7 +747,7 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
     }
 
     if (!taskId || !attachmentId) {
-        res.status(400).json({ error: 'Не указан ID задачи или вложения в теле запроса.' });
+        res.status(400).json({ error: 'Не указан ID задачи или вложения.' });
         return;
     }
 
@@ -748,37 +755,42 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
 
     try {
         client = await knex.transaction();
-        const taskResult = await client('tasks')
+        const task = await client('tasks')
             .select('creator_id', 'assignee_id')
             .where('id', taskId)
             .first();
-        if (taskResult.length === 0) {
+
+        if (!task) {
             await client.rollback();
             res.status(404).json({ error: 'Задача не найдена.' });
             console.log(`Попытка удалить вложение из несуществующей задачи ID: ${taskId} пользователем ${userId}`);
             return;
         }
-        const task = taskResult[0];
+
         if (task.creator_id !== userId && task.assignee_id !== userId) {
             await client.rollback();
             res.status(403).json({ error: 'У вас нет прав на удаление вложений этой задачи.' });
-            console.log(`Пользователь ${userId} пытался удалить вложение ${attachmentId} из задачи ${taskId}, к которой не имеет отношения.`);
+            console.log(
+                `Пользователь ${userId} пытался удалить вложение ${attachmentId} из задачи ${taskId}, к которой не имеет отношения.`
+            );
             return;
         }
 
-        const attachmentResult = await client('task_attachments')
+        const attachment = await client('task_attachments')
             .select('file_path')
             .where('id', attachmentId)
             .andWhere('task_id', taskId)
             .first();
-        if (!attachmentResult) {
+
+        if (!attachment) {
             await client.rollback();
             res.status(404).json({ error: 'Вложение не найдено.' });
             console.log(`Попытка удалить несуществующее вложение ID: ${attachmentId} для задачи ${taskId}`);
             return;
         }
 
-        const filePath = attachmentResult.file_path;
+        await fileService.deleteFileFromDiskByDbPath(attachment.file_path);
+
         const deleteResult = await client('task_attachments')
             .where('id', attachmentId)
             .andWhere('task_id', taskId)
@@ -790,16 +802,6 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
             res.status(404).json({ error: 'Не удалось удалить вложение.' });
             console.log(`Не удалось удалить вложение ID: ${attachmentId} для задачи ${taskId}`);
             return;
-        }
-
-        const fullPath = path.resolve(filePath);
-        try {
-            if (fs.existsSync(fullPath)) {
-                fs.unlinkSync(fullPath);
-                console.log(`Файл вложения удален с диска: ${fullPath}`);
-            }
-        } catch (fsError) {
-            console.error(`Ошибка при удалении файла вложения ${fullPath} с диска:`, fsError);
         }
 
         await client.commit();
@@ -824,10 +826,9 @@ export const deleteTaskAttachment = async (req: Request, res: Response): Promise
     }
 };
 
-// Скачивание вложения (URL /download_body/:attachmentId)
 export const downloadTaskAttachment = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { attachmentId } = req.params; 
+    const { attachmentId } = req.params;
 
     if (!userId) {
         res.status(401).json({ error: 'Пользователь не аутентифицирован.' });
@@ -839,53 +840,28 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
     }
 
     try {
-        // --- Logic for getTaskFileDetailsForDownload (inline) ---
-        const attachment = await knex('task_attachments as ta')
-            .select(
-                'ta.file_path as filePathInDb',
-                'ta.file_name as originalName',
-                'ta.file_type as mimeType',
-                'ta.task_id'
-            )
-            .where('ta.id', attachmentId)
-            .first();
+        const fileDetails = await fileService.getTaskFileDetailsForDownload(attachmentId, userId);
 
-        if (!attachment) {
-            res.status(404).json({ error: 'Вложение не найдено.' });
+        if ('error' in fileDetails) {
+            res.status(fileDetails.status).json({ error: fileDetails.error });
             return;
         }
 
-        const canAccess = await isUserTaskParticipant(userId, attachment.task_id);
-        if (!canAccess) {
-            res.status(403).json({ error: 'Доступ к файлу запрещен.' });
-            return;
-        }
-        // --- End of inline logic ---
-        
-        const absolutePathOnDisk = path.join(process.cwd(), attachment.filePathInDb);
-        
-        if (!fs.existsSync(absolutePathOnDisk)) {
-            console.error(`Task attachment file not found on disk: ${absolutePathOnDisk} (DB path: ${attachment.filePathInDb})`);
-            res.status(404).json({ error: 'Файл не найден на сервере.' });
-            return;
-        }
+        res.setHeader('Content-Type', fileDetails.mimeType);
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileDetails.fileNameToUser)}"`);
 
-        res.setHeader('Content-Type', attachment.mimeType || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(attachment.originalName)}"`);
-
-        const fileStream = fs.createReadStream(absolutePathOnDisk);
-        fileStream.on('error', (streamError) => {
+        const fileStream = createReadStream(fileDetails.absolutePathOnDisk);
+        fileStream.on('error', (streamError: NodeJS.ErrnoException) => {
             console.error('Error streaming task attachment to response:', streamError);
             if (!res.headersSent) {
                 res.status(500).json({ error: 'Не удалось отправить файл' });
             }
         });
         fileStream.pipe(res);
-
     } catch (error: any) {
         console.error(`Ошибка при скачивании вложения ${attachmentId}:`, error);
         if (!res.headersSent) {
-            if (error.code === '22P02') { 
+            if (error.code === '22P02') {
                 res.status(400).json({ error: 'Неверный формат ID вложения.' });
             } else {
                 res.status(500).json({ error: 'Не удалось скачать вложение' });
@@ -894,31 +870,24 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
     }
 };
 
-// Получение информации о конкретном вложении (URL /info/:attachmentId)
 export const getTaskAttachmentInfo = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { attachmentId } = req.params; 
+    const { taskId, attachmentId } = req.params;
 
     if (!userId) {
         res.status(401).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
-    if (!attachmentId) {
-        res.status(400).json({ error: 'Не указан ID вложения.' });
+    if (!attachmentId || !taskId) {
+        res.status(400).json({ error: 'Не указан ID задачи или вложения.' });
         return;
     }
 
     try {
         const attachmentDetails = await knex('task_attachments as ta')
-            .select(
-                'ta.id',
-                'ta.task_id',
-                'ta.file_name',
-                'ta.file_type',
-                'ta.file_size',
-                'ta.created_at'
-            )
+            .select('ta.id', 'ta.task_id', 'ta.file_name', 'ta.file_type', 'ta.file_size', 'ta.created_at')
             .where('ta.id', attachmentId)
+            .andWhere('ta.task_id', taskId)
             .first();
 
         if (!attachmentDetails) {
@@ -939,9 +908,11 @@ export const getTaskAttachmentInfo = async (req: Request, res: Response): Promis
             file_type: attachmentDetails.file_type,
             file_size: attachmentDetails.file_size,
             created_at: new Date(attachmentDetails.created_at).toISOString(),
-            download_url: `/api/tasks/attachments/download_body/${attachmentDetails.id}`
+            download_url: `/api/tasks/${taskId}/attachments/download/${attachmentDetails.id}`,
         });
-        console.log(`Информация о вложении ID ${attachmentId} для задачи ${attachmentDetails.task_id} получена пользователем ${userId}`);
+        console.log(
+            `Информация о вложении ID ${attachmentId} для задачи ${attachmentDetails.task_id} получена пользователем ${userId}`
+        );
     } catch (error: any) {
         console.error(`Ошибка при получении информации о вложении ${attachmentId}:`, error);
         if (!res.headersSent) {
@@ -954,7 +925,6 @@ export const getTaskAttachmentInfo = async (req: Request, res: Response): Promis
     }
 };
 
-// Получение логов изменений
 export const getTaskLogs = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { taskId } = req.params;
@@ -980,31 +950,33 @@ export const getTaskLogs = async (req: Request, res: Response): Promise<void> =>
             console.log(`Попытка получить логи несуществующей задачи ID: ${taskId} пользователем ${userId}`);
             return;
         }
-        
+
         if (taskData.creator_id !== userId && taskData.assignee_id !== userId) {
             res.status(403).json({ error: 'Вы не можете просматривать логи этой задачи.' });
-            console.log(`Пользователь ${userId} пытался получить логи задачи ${taskId}, к которой не имеет отношения.`);
+            console.log(
+                `Пользователь ${userId} пытался получить логи задачи ${taskId}, к которой не имеет отношения.`
+            );
             return;
         }
 
         const logsData = await knex('task_logs as tl')
             .select(
-                'tl.id as logId', // Alias id to logId
+                'tl.id as logId',
                 'tl.task_id',
                 'tl.action',
                 'tl.old_value',
                 'tl.new_value',
-                'tl.changed_by as user_id', // Alias changed_by to user_id
+                'tl.changed_by as user_id',
                 'u.username',
-                'tl.created_at as timestamp' // Alias created_at to timestamp
+                'tl.created_at as timestamp'
             )
             .leftJoin('users as u', 'tl.changed_by', 'u.id')
             .where('tl.task_id', taskId)
             .orderBy('tl.created_at', 'asc');
 
-        const logs = logsData.map(log => ({
+        const logs = logsData.map((log) => ({
             ...log,
-            timestamp: new Date(log.timestamp).toISOString(), // Ensure correct timestamp format
+            timestamp: new Date(log.timestamp).toISOString(),
         }));
 
         res.status(200).json(logs);
@@ -1019,7 +991,6 @@ export const getTaskLogs = async (req: Request, res: Response): Promise<void> =>
     }
 };
 
-// Генерация отчета
 export const generateTaskReport = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
     const { status, startDate, endDate } = req.query;
@@ -1047,9 +1018,8 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
             )
             .leftJoin('users as creator', 't.creator_id', 'creator.id')
             .leftJoin('users as assignee', 't.assignee_id', 'assignee.id')
-            .where(function() {
-                this.where('t.creator_id', userId)
-                    .orWhere('t.assignee_id', userId);
+            .where(function () {
+                this.where('t.creator_id', userId).orWhere('t.assignee_id', userId);
             });
 
         if (status) {
@@ -1061,7 +1031,6 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
         }
 
         if (startDate) {
-            // Ensure startDate is a valid date format before using in query
             if (isNaN(new Date(startDate as string).getTime())) {
                 res.status(400).json({ error: 'Неверный формат начальной даты.' });
                 return;
@@ -1070,7 +1039,6 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
         }
 
         if (endDate) {
-            // Ensure endDate is a valid date format
             if (isNaN(new Date(endDate as string).getTime())) {
                 res.status(400).json({ error: 'Неверный формат конечной даты.' });
                 return;
@@ -1080,7 +1048,7 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
 
         const tasksData = await query.orderBy('t.created_at', 'desc');
 
-        const tasks = tasksData.map(task => ({
+        const tasks = tasksData.map((task) => ({
             id: task.id,
             title: task.title,
             description: task.description,
@@ -1097,11 +1065,14 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
 
         const report = {
             totalTasks: tasks.length,
-            tasksByStatus: validStatuses.reduce((acc, stat) => {
-                acc[stat] = tasks.filter(task => task.status === stat).length;
-                return acc;
-            }, {} as Record<string, number>),
-            tasks: tasks,
+            tasksByStatus: validStatuses.reduce(
+                (acc, stat) => {
+                    acc[stat] = tasks.filter((task) => task.status === stat).length;
+                    return acc;
+                },
+                {} as Record<string, number>
+            ),
+            tasks,
             generatedAt: new Date().toISOString(),
         };
 
@@ -1109,7 +1080,6 @@ export const generateTaskReport = async (req: Request, res: Response): Promise<v
         console.log(`Отчет по задачам сгенерирован для пользователя ${userId}`);
     } catch (error: any) {
         console.error('Ошибка при генерации отчета:', error);
-        // Check for specific Knex/DB errors if necessary, e.g., invalid date format if not caught above
         res.status(500).json({ error: 'Не удалось сгенерировать отчет' });
     }
 };

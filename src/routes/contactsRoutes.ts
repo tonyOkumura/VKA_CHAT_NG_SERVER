@@ -1,10 +1,16 @@
 import { Router } from "express";
-import { addContact, fetchContacts } from "../controllers/contactsController";
-import { verifyToken } from "../middlewares/authMiddleware";
+import { addContact, fetchContacts, deleteContact, searchUsers } from "../controllers/contactsController";
+import { authMiddleware } from "../middlewares/authMiddleware";
 
 const router = Router();
 
-router.get('/', verifyToken, fetchContacts);
-router.post('/', verifyToken, addContact);
+
+router.get('/', authMiddleware, fetchContacts);
+
+router.post('/', authMiddleware, addContact);
+
+router.delete('/:contactId', authMiddleware, deleteContact);
+
+router.get('/search', authMiddleware, searchUsers);
 
 export default router;

@@ -1,185 +1,187 @@
 import { Request, Response } from 'express';
-import knex from '../lib/knex'; // Используем Knex
-import * as socketService from '../services/socketService'; // Импортируем сервис
+import knex from '../lib/knex';
+import { emitToUser } from '../services/socketService';
+import { v4 as uuidv4 } from 'uuid';
 
-export const fetchContacts = async (req: Request, res: Response): Promise<any> => {
-    const userId = req.user?.id;
-    if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
-    }
+export const fetchContacts = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  console.log(`Fetch contacts request for user: ${userId}`);
 
-    console.log(`Fetching contacts for user: ${userId}`);
+  try {
+    const contacts = await knex('contacts as c')
+      .select(
+        'c.contact_id as id',
+        'u.username',
+        'u.avatar_path as avatarUrl',
+        'u.is_online as isOnline',
+        'c.created_at',
+        'c.updated_at'
+      )
+      .join('users as u', 'c.contact_id', 'u.id')
+      .where('c.user_id', userId);
 
-    try {
-        const contacts = await knex('contacts as c')
-            .select(
-                'u.id',
-                'u.username',
-                'u.email',
-                'u.is_online',
-                'ua.file_path as avatarPath'
-            )
-            .join('users as u', 'u.id', 'c.contact_id')
-            .leftJoin('user_avatars as ua', 'u.id', 'ua.user_id')
-            .where('c.user_id', userId)
-            .orderBy('u.username', 'asc');
-
-        console.log(`Contacts fetched successfully for user: ${userId}`);
-        
-        res.json(contacts);
-
-    } catch (error) {
-        console.error('Error fetching contacts:', error);
-        res.status(500).json({ error: 'Failed to fetch contacts' });
-    }
+    res.json({ message: 'Contacts fetched successfully', contacts });
+  } catch (error: any) {
+    console.error(`Error fetching contacts for user ${userId}:`, error);
+    res.status(500).json({ error: 'Failed to fetch contacts' });
+  }
 };
 
-export const addContact = async (req: Request, res: Response): Promise<any> => {
-    const userId = req.user?.id;
-    const userUsername = req.user?.username; // Получаем username авторизованного пользователя
+export const addContact = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const { contact_id } = req.body;
+  console.log(`Add contact request: user ${userId}, contact ${contact_id}`);
 
-    if (!userId || !userUsername) {
-        return res.status(401).json({ error: 'User not authenticated or user data incomplete' });
+  if (!contact_id) {
+    res.status(400).json({ error: 'Contact ID is required' });
+    return;
+  }
+
+  if (userId === contact_id) {
+    res.status(400).json({ error: 'Cannot add yourself as a contact' });
+    return;
+  }
+
+  try {
+    // Проверка существования пользователя
+    const contactUser = await knex('users')
+      .select('id', 'username', 'avatar_path as avatarUrl', 'is_online as isOnline')
+      .where('id', contact_id)
+      .first();
+
+    if (!contactUser) {
+      res.status(404).json({ error: 'Contact user not found' });
+      return;
     }
 
-    const { contact_email } = req.body;
-    console.log(`Adding contact for user: ${userId} (${userUsername}) with email: ${contact_email}`);
+    // Проверка, не является ли пользователь уже контактом
+    const existingContact = await knex('contacts')
+      .where({ user_id: userId, contact_id })
+      .first();
 
-    if (!contact_email) {
-        return res.status(400).json({ error: 'Contact email is required.' });
-    }
-    
-    // Получаем email текущего пользователя, чтобы предотвратить добавление себя по email
-    const currentUser = await knex('users').select('email').where('id', userId).first();
-    if (currentUser && currentUser.email === contact_email) {
-        return res.status(400).json({ error: 'Вы не можете добавить себя в контакты.' });
+    if (existingContact) {
+      res.status(409).json({ error: 'Contact already exists' });
+      return;
     }
 
-    try {
-        const contactUser = await knex('users')
-            .select('id', 'username', 'email') // Выбираем нужные поля для payload события
-            .where('email', contact_email)
-            .first();
+    // Добавление контакта
+    const [newContact] = await knex('contacts')
+      .insert({
+        id: uuidv4(),
+        user_id: userId,
+        contact_id,
+        created_at: new Date(),
+        updated_at: new Date()
+      })
+      .returning(['id', 'user_id', 'contact_id', 'created_at', 'updated_at']);
 
-        if (!contactUser) {
-            console.log(`Contact with email ${contact_email} not found`);
-            return res.status(404).json({ error: 'Пользователь с таким email не найден.' });
-        }
+    // Создание уведомления для contact_id
+    const [notification] = await knex('notifications')
+      .insert({
+        id: uuidv4(),
+        user_id: contact_id,
+        type: 'contact_added',
+        content: `User ${req.user?.username} added you as a contact`,
+        related_id: userId,
+        created_at: new Date()
+      })
+      .returning(['id', 'user_id', 'type', 'content', 'related_id', 'created_at']);
 
-        const contact_id = contactUser.id;
+    // Эмиссия события contactAdded
+    const currentUser = await knex('users')
+      .select('username', 'avatar_path as avatarUrl', 'is_online as isOnline')
+      .where('id', userId)
+      .first();
 
-        if (userId === contact_id) { // Двойная проверка, на случай если email не совпал выше
-            console.log(`User ${userId} tried to add themselves as a contact.`);
-            return res.status(400).json({ error: 'Вы не можете добавить себя в контакты.' });
-        }
+    emitToUser(contact_id, 'contactAdded', {
+      contact: {
+        id: userId,
+        username: currentUser?.username,
+        avatarUrl: currentUser?.avatarUrl,
+        isOnline: currentUser?.isOnline
+      },
+      notification
+    });
 
-        let newContactAdded = false;
-        await knex.transaction(async (trx) => {
-            // Проверяем, существует ли уже контакт
-            const existingContact = await trx('contacts')
-                .where({ user_id: userId, contact_id: contact_id })
-                .first();
-
-            if (!existingContact) {
-                await trx('contacts').insert({
-                    user_id: userId,
-                    contact_id: contact_id
-                });
-                // Триггер add_reverse_contact_trigger должен автоматически добавить обратную запись (contact_id -> userId)
-                newContactAdded = true;
-            }
-        });
-
-        if (newContactAdded) {
-            const targetRoom = `user_${contact_id}`;
-            // payload для сокета: информация о пользователе, который добавил в контакты
-            const eventPayload = {
-                id: userId, 
-                username: userUsername, 
-                email: currentUser?.email, // email пользователя, который добавил
-                // Можно добавить avatarPath если нужно
-            };
-            socketService.emitToRoom(targetRoom, 'newContactAdded', eventPayload);
-            
-            // payload для ответа: информация о добавленном контакте
-            const responsePayload = {
-                id: contactUser.id,
-                username: contactUser.username,
-                email: contactUser.email,
-                // avatarPath для добавленного контакта можно получить отдельным запросом или если он уже есть в contactUser
-            };
-            res.status(201).json({ message: 'Контакт успешно добавлен.', contact: responsePayload });
-            console.log(`Contact ${contact_id} (${contactUser.username}) added successfully for user ${userId} (${userUsername}).`);
-        } else {
-            res.status(200).json({ message: 'Контакт уже существует.', contactId: contact_id });
-            console.log(`Contact relationship between ${userId} and ${contact_id} already exists.`);
-        }
-
-    } catch (error: any) {
-        console.error('Error adding contact:', error);
-        // Ошибки транзакции обрабатываются автоматически (rollback)
-        if (error.code === '23503') { // Foreign key violation (если триггер или что-то пошло не так)
-            return res.status(404).json({ error: 'Не удалось добавить контакт: пользователь-цель не найден.' });
-        } else if (error.message.includes('Вы не можете добавить себя в контакты')) { // Кастомная ошибка
-            return res.status(400).json({error: error.message });
-        }
-        res.status(500).json({ error: 'Не удалось добавить контакт' });
+    res.status(201).json({
+      message: 'Contact added successfully',
+      contact: {
+        id: contactUser.id,
+        username: contactUser.username,
+        avatarUrl: contactUser.avatarUrl,
+        isOnline: contactUser.isOnline,
+        created_at: newContact.created_at,
+        updated_at: newContact.updated_at
+      }
+    });
+  } catch (error: any) {
+    console.error(`Error adding contact for user ${userId}:`, error);
+    if (error.code === '23503') {
+      res.status(404).json({ error: 'Contact user not found' });
+    } else if (error.code === '23505') {
+      res.status(409).json({ error: 'Contact already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to add contact' });
     }
+  }
 };
 
-export const deleteContact = async (req: Request, res: Response): Promise<any> => {
-    const userId = req.user?.id;
-    if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+export const deleteContact = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const { contactId } = req.params;
+  console.log(`Delete contact request: user ${userId}, contact ${contactId}`);
+
+  try {
+    const deleted = await knex('contacts')
+      .where({ user_id: userId, contact_id: contactId })
+      .del();
+
+    if (!deleted) {
+      res.status(404).json({ error: 'Contact not found' });
+      return;
     }
 
-    const { contactId } = req.params;
-    console.log(`Attempting to delete contact relationship between user ${userId} and contact ${contactId}`);
+    // Эмиссия события contactRemoved
+    emitToUser(contactId, 'contactRemoved', {
+      userId,
+      username: req.user?.username
+    });
 
-    if (!contactId) {
-        return res.status(400).json({ error: 'Contact ID is required in URL parameters.' });
-    }
-    if (userId === contactId) {
-        return res.status(400).json({ error: 'Нельзя удалить себя из контактов таким способом.' });
-    }
+    res.json({ message: 'Contact deleted successfully' });
+  } catch (error: any) {
+    console.error(`Error deleting contact for user ${userId}:`, error);
+    res.status(500).json({ error: 'Failed to delete contact' });
+  }
+};
 
-    try {
-        let relationshipsDeleted = 0;
-        await knex.transaction(async (trx) => {
-            // Удаляем A -> B
-            const deleted1 = await trx('contacts')
-                .where({ user_id: userId, contact_id: contactId })
-                .del();
-            // Удаляем B -> A (триггер на удаление обратной связи не предусмотрен, удаляем вручную)
-            const deleted2 = await trx('contacts')
-                .where({ user_id: contactId, contact_id: userId })
-                .del();
-            relationshipsDeleted = deleted1 + deleted2;
-        });
+export const searchUsers = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.user?.id;
+  const query = req.query.q as string;
+  console.log(`Search users request: user ${userId}, query ${query}`);
 
-        if (relationshipsDeleted > 0) {
-            console.log(`Contact relationship between ${userId} and ${contactId} deleted successfully.`);
+  if (!query || query.length < 2) {
+    res.status(400).json({ error: 'Search query must be at least 2 characters long' });
+    return;
+  }
 
-            const eventPayloadUser = { contactId: contactId }; 
-            const userRoom = `user_${userId}`;
-            socketService.emitToRoom(userRoom, 'contactRemoved', eventPayloadUser);
+  try {
+    const users = await knex('users')
+      .select('id', 'username', 'avatar_path as avatarUrl', 'is_online as isOnline')
+      .whereNot('id', userId)
+      .andWhere(function () {
+        this.where('username', 'ILIKE', `%${query}%`).orWhere('email', 'ILIKE', `%${query}%`);
+      })
+      .whereNotExists(function () {
+        this.select('*')
+          .from('contacts')
+          .where('contacts.user_id', userId)
+          .andWhereRaw('contacts.contact_id = users.id');
+      })
+      .limit(20);
 
-            const eventPayloadContact = { contactId: userId }; 
-            const contactRoom = `user_${contactId}`;
-            socketService.emitToRoom(contactRoom, 'contactRemoved', eventPayloadContact);
-
-            res.status(200).json({ message: 'Контакт успешно удален.' });
-        } else {
-            console.log(`Contact relationship between ${userId} and ${contactId} not found.`);
-            return res.status(404).json({ error: 'Контакт не найден.' });
-        }
-
-    } catch (error: any) {
-        console.error('Error deleting contact:', error);
-        if (error.code === '22P02') { 
-            res.status(400).json({ error: 'Неверный формат ID контакта.' });
-        } else {
-            res.status(500).json({ error: 'Не удалось удалить контакт.' });
-        }
-    }
+    res.json({ message: 'Users found successfully', users });
+  } catch (error: any) {
+    console.error(`Error searching users for user ${userId}:`, error);
+    res.status(500).json({ error: 'Failed to search users' });
+  }
 };

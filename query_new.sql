@@ -194,6 +194,15 @@ CREATE TABLE task_tags (
     PRIMARY KEY (task_id, tag_id)
 );
 
+-- Таблица для хранения токенов сброса пароля
+CREATE TABLE password_resets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Индексы для оптимизации
 CREATE INDEX idx_dialog_participants_dialog_id ON dialog_participants(dialog_id);
 CREATE INDEX idx_group_participants_group_id ON group_participants(group_id);
@@ -214,6 +223,8 @@ CREATE INDEX idx_task_tags_tag_id ON task_tags(tag_id);
 CREATE INDEX idx_message_reads_message_id ON message_reads(message_id);
 CREATE INDEX idx_message_mentions_message_id ON message_mentions(message_id);
 CREATE INDEX idx_group_roles_group_id ON group_roles(group_id);
+CREATE INDEX idx_password_resets_token ON password_resets(token);
+CREATE INDEX idx_password_resets_expires_at ON password_resets(expires_at);
 
 -- Функции и триггеры
 
