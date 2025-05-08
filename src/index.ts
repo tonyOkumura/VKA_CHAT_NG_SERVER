@@ -4,7 +4,7 @@ import morgan from 'morgan';
 import http from 'http';
 import { Server } from 'socket.io';
 import { setupRoutes } from './routes';
-import { initializeSocketService } from './services/socketService';
+import { initializeSocketService } from './services/socket/socketService';
 import { setupSocketHandlers } from './services/socketHandlers';
 import { setupDirectories } from './config/directories';
 import { HOST, PORT, CORS_ORIGIN } from './config/constants';

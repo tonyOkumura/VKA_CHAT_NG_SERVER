@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import knex from '../lib/knex';
-import * as socketService from '../services/socketService';
+import * as socketService from '../services/socket/socketService';
 import fs from 'fs';
 import * as fileService from '../services/fileService';
 import multer from 'multer';
@@ -53,7 +53,7 @@ export const fetchAllMessages = async (req: Request, res: Response): Promise<voi
                         'file_type', f.file_type,
                         'file_size', f.file_size,
                         'created_at', f.created_at::text,
-                        'download_url', '/api/messages/files/download_body/' || f.id::text
+                        'download_url', '/messages/files/download_body/' || f.id::text
                     ) ORDER BY f.created_at
                 ) as files
             FROM files f
@@ -659,7 +659,7 @@ export const uploadMessageFileAndCreateMessage = async (req: Request, res: Respo
                 file_type: fileInfoFromService!.mimeType,
                 file_size: fileInfoFromService!.size,
                 created_at: new Date().toISOString(),
-                download_url: `/api/messages/files/download_body/${savedDbFileId}`,
+                download_url: `messages/files/download_body/${savedDbFileId}`,
             },
         });
     } catch (error: any) {
@@ -777,7 +777,7 @@ export const getMessageFileInfo = async (req: Request, res: Response): Promise<v
                 'file_type',
                 'file_size',
                 knex.raw('created_at::text'),
-                knex.raw(`'/api/messages/files/download_body/' || id::text as download_url`)
+                knex.raw(`'/messages/files/download_body/' || id::text as download_url`)
             )
             .where('id', file_id)
             .first();
@@ -810,7 +810,7 @@ const fetchFullMessageDetailsById = async (messageId: string, ): Promise<any | n
                     json_build_object(
                         'id', f.id, 'file_name', f.file_name, 'file_type', f.file_type,
                         'file_size', f.file_size, 'created_at', f.created_at::text,
-                        'download_url', '/api/messages/files/download_body/' || f.id::text
+                        'download_url', '/messages/files/download_body/' || f.id::text
                     ) ORDER BY f.created_at
                 ) as files
             FROM files f

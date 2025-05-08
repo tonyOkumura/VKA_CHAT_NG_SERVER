@@ -2,26 +2,8 @@ import { Request, Response } from 'express';
 import knex from '../lib/knex';
 import * as fileService from '../services/fileService';
 
-// Интерфейс для пользователя в ответе getAllUsers
-interface UserResponse {
-    user_id: string;
-    username: string;
-    email: string;
-    is_online: boolean;
-    avatarPath: string | null;
-    created_at: string | null;
-    updated_at: string | null;
-}
 
-// Интерфейс для ответа при загрузке аватара
-interface AvatarUploadResponse {
-    message: string;
-    filePath: string;
-    fileName: string;
-    downloadUrl: string;
-}
-
-export const updateUserOnlineStatus = async (userId: string, isOnline: boolean): Promise<void> => {
+export const updateUserOnlineStatus = async (userId: string, isOnline: boolean): Promise<any> => {
     try {
         await knex('users')
             .where('id', userId)
@@ -39,7 +21,7 @@ export const updateUserOnlineStatus = async (userId: string, isOnline: boolean):
     }
 };
 
-export const getAllUsers = async (req: Request, res: Response): Promise<void> => {
+export const getAllUsers = async (req: Request, res: Response): Promise<any> => {
     console.log(`Получение списка всех пользователей для пользователя ${req.user?.id}`);
 
     try {
@@ -57,7 +39,7 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
 
         console.log(`Успешно получено ${users.length} пользователей`);
 
-        const formattedUsers: UserResponse[] = users.map(user => ({
+        const formattedUsers = users.map(user => ({
             user_id: user.user_id,
             username: user.username,
             email: user.email,
@@ -77,7 +59,7 @@ export const getAllUsers = async (req: Request, res: Response): Promise<void> =>
     }
 };
 
-export const uploadUserAvatar = async (req: Request, res: Response): Promise<void> => {
+export const uploadUserAvatar = async (req: Request, res: Response): Promise<any> => {
     const userId = req.user?.id;
     const targetUserId = req.params.userId;
 
@@ -97,11 +79,11 @@ export const uploadUserAvatar = async (req: Request, res: Response): Promise<voi
     try {
         const { filePathInDb, originalName } = await fileService.storeAvatar(req.file, userId);
 
-        const response: AvatarUploadResponse = {
+        const response = {
             message: 'Аватар успешно загружен',
             filePath: filePathInDb,
             fileName: originalName,
-            downloadUrl: `/api/users/${userId}/avatar`,
+            downloadUrl: `/users/${userId}/avatar`,
         };
 
         res.status(201).json(response);
@@ -115,7 +97,7 @@ export const uploadUserAvatar = async (req: Request, res: Response): Promise<voi
     }
 };
 
-export const streamUserAvatar = async (req: Request, res: Response): Promise<void> => {
+export const streamUserAvatar = async (req: Request, res: Response): Promise<any> => {
     const { userId } = req.params;
 
     try {
@@ -135,7 +117,7 @@ export const streamUserAvatar = async (req: Request, res: Response): Promise<voi
     }
 };
 
-export const deleteUserAvatar = async (req: Request, res: Response): Promise<void> => {
+export const deleteUserAvatar = async (req: Request, res: Response): Promise<any> => {
     const userId = req.user?.id;
     const targetUserId = req.params.userId;
 

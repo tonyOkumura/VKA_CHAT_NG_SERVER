@@ -106,3 +106,15 @@ export const getUserDetailsWithAvatar = async (
     return { id: userId, username: null, avatarPath: null };
   }
 };
+export const isUserTaskParticipant = async (
+  userId: string,
+  taskId: string,
+  trx?: KnexType | KnexType.Transaction
+): Promise<boolean> => {
+  const db = trx || knex;
+  const task = await db('tasks')
+      .select('creator_id', 'assignee_id')
+      .where('id', taskId)
+      .first();
+  return !!task && (task.creator_id === userId || task.assignee_id === userId);
+};

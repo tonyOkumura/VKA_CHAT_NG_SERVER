@@ -5,8 +5,7 @@ import path from 'path';
 import multer from 'multer';
 import knex from '../lib/knex';
 import type { Knex as KnexType } from 'knex';
-import { isUserDialogParticipant, isUserGroupParticipant } from '../lib/dbHelpers';
-import { isUserTaskParticipant } from '../controllers/taskController';
+import { isUserDialogParticipant, isUserGroupParticipant, isUserTaskParticipant } from '../lib/dbHelpers';
 
 export const UPLOAD_BASE_DIR = path.join(process.cwd(), 'uploads');
 

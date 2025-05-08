@@ -3,9 +3,9 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import knex from '../lib/knex';
 import type { Knex as KnexType } from 'knex';
-import * as socketService from '../services/socketService';
+import * as socketService from '../services/socket/socketService';
 import * as fileService from '../services/fileService';
-import { getUserDetailsWithAvatar } from '../lib/dbHelpers';
+import { getUserDetailsWithAvatar, isUserTaskParticipant } from '../lib/dbHelpers';
 
 const validStatuses = ['open', 'in_progress', 'done', 'closed'];
 const validPriorities = [1, 2, 3, 4, 5];
@@ -194,18 +194,6 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
     }
 };
 
-export const isUserTaskParticipant = async (
-    userId: string,
-    taskId: string,
-    trx?: KnexType | KnexType.Transaction
-): Promise<boolean> => {
-    const db = trx || knex;
-    const task = await db('tasks')
-        .select('creator_id', 'assignee_id')
-        .where('id', taskId)
-        .first();
-    return !!task && (task.creator_id === userId || task.assignee_id === userId);
-};
 
 export const updateTask = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
@@ -722,7 +710,7 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
             uploaded_at: new Date(attachment.created_at).toISOString(),
             uploaded_by_id: attachment.uploader_id,
             uploaded_by_username: attachment.uploaded_by_username,
-            download_url: `/api/tasks/${taskId}/attachments/download/${attachment.id}`,
+            download_url: `/tasks/${taskId}/attachments/download/${attachment.id}`,
         }));
 
         res.status(200).json(attachments);
@@ -908,7 +896,7 @@ export const getTaskAttachmentInfo = async (req: Request, res: Response): Promis
             file_type: attachmentDetails.file_type,
             file_size: attachmentDetails.file_size,
             created_at: new Date(attachmentDetails.created_at).toISOString(),
-            download_url: `/api/tasks/${taskId}/attachments/download/${attachmentDetails.id}`,
+            download_url: `/tasks/${taskId}/attachments/download/${attachmentDetails.id}`,
         });
         console.log(
             `Информация о вложении ID ${attachmentId} для задачи ${attachmentDetails.task_id} получена пользователем ${userId}`

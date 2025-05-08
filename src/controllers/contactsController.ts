@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import knex from '../lib/knex';
-import { emitToUser } from '../services/socketService';
+import { emitToUser } from '../services/socket/socketService';
 import { v4 as uuidv4 } from 'uuid';
 
 export const fetchContacts = async (req: Request, res: Response): Promise<void> => {

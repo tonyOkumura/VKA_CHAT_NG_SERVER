@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import knex from '../lib/knex';
-import { emitToUser, emitToRoom } from '../services/socketService';
+import { emitToUser, emitToRoom } from '../services/socket/socketService';
 
 const fetchFullGroupDetails = async (groupId: string, ): Promise<any | null> => {
   console.log(`Fetching full details for group: ${groupId}`);

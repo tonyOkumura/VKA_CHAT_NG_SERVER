@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import knex from '../lib/knex';
-import { emitToUser, emitToRoom } from '../services/socketService';
+import { emitToUser, emitToRoom } from '../services/socket/socketService';
 
 const fetchFullDialogDetails = async (dialogId: string, currentUserId?: string): Promise<any> => {
   console.log(`Fetching full details for dialog: ${dialogId}`);
