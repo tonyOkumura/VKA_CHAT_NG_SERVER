@@ -36,6 +36,11 @@ export interface MarkMessagesAsReadData {
     message_ids: string[];
 }
 
+export interface UpdateMyEventStatusData {
+    eventId: string;
+    status: string;
+}
+
 // Лимиты для защиты от спама
 export const MESSAGE_RATE_LIMIT = {
     maxMessages: 10,

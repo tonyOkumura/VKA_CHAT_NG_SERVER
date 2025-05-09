@@ -6,7 +6,8 @@ import { handleJoinGroup } from './socket/groupSocket';
 import { handleSendMessage, handleEditMessage, handleMarkMessagesAsRead, handleTyping } from './socket/messageSocket';
 import { handleJoinTaskDetails } from './socket/taskSocket';
 import { handleNotification, handleDeleteAccount, handleDisconnect } from './socket/userSocket';
-import { MessageData, MarkMessagesAsReadData, NotificationData, ContactAddedData, TypingData } from './socket/socketUtils';
+import { handleJoinEventRoom, handleLeaveEventRoom, handleUpdateMyEventStatus } from './socket/eventSocket';
+import { MessageData, MarkMessagesAsReadData, NotificationData, ContactAddedData, TypingData, UpdateMyEventStatusData } from './socket/socketUtils';
 
 export function setupSocketHandlers(io: Server): void {
     io.on('connection', (socket: Socket) => {
@@ -24,6 +25,9 @@ export function setupSocketHandlers(io: Server): void {
         socket.on('stop_typing', (data: TypingData) => handleTyping(socket, data, false));
         socket.on('joinTaskDetails', (taskId: string) => handleJoinTaskDetails(socket, taskId, true));
         socket.on('leaveTaskDetails', (taskId: string) => handleJoinTaskDetails(socket, taskId, false));
+        socket.on('joinEventRoom', (eventId: string) => handleJoinEventRoom(socket, eventId));
+        socket.on('leaveEventRoom', (eventId: string) => handleLeaveEventRoom(socket, eventId));
+        socket.on('updateMyEventStatus', (data: UpdateMyEventStatusData) => handleUpdateMyEventStatus(socket, data));
         socket.on('notification', async (data: NotificationData) => handleNotification(socket, data));
         socket.on('contactAdded', async (data: ContactAddedData) => handleContactAdded(socket, data));
         socket.on('deleteAccount', async () => handleDeleteAccount(socket, io));

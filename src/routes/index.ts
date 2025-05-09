@@ -6,6 +6,7 @@ import dialogRoutes from './dialogRoutes';
 import contactsRoutes from './contactsRoutes';
 import taskRoutes from './taskRoutes';
 import usersRoutes from './usersRoutes';
+import eventsRoutes from './eventsRoutes';
 
 export function setupRoutes(app: Express): void {
     app.use('/auth', authRoutes);
@@ -15,4 +16,5 @@ export function setupRoutes(app: Express): void {
     app.use('/contacts', contactsRoutes);
     app.use('/tasks', taskRoutes);
     app.use('/users', usersRoutes);
+    app.use('/events', eventsRoutes);
 }
