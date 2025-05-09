@@ -652,18 +652,23 @@ export const addTaskComment = async (req: Request, res: Response): Promise<void>
 // Функция для получения комментариев к задаче
 export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const { taskId } = req.params; // taskId from URL parameters
+    // const { taskId } = req.params; // taskId from URL parameters // OLD LINE
+    const { taskId } = req.body; // taskId from body // NEW LINE
 
-    console.log(`Попытка получить комментарии к задаче ID: ${taskId} пользователем ${userId}`);
+    console.log(`Попытка получить комментарии к задаче ID: ${taskId} (из тела) пользователем ${userId}`);
 
     if (!userId) {
         res.status(403).json({ error: 'Пользователь не аутентифицирован.' });
         return;
     }
-    if (!taskId) {
-        res.status(400).json({ error: 'Не указан ID задачи в параметрах URL.' });
-        return;
-    }
+    // if (!taskId) { // OLD LINE
+    //     res.status(400).json({ error: 'Не указан ID задачи в параметрах URL.' }); // OLD LINE
+    //     return; // OLD LINE
+    // } // OLD LINE
+    if (!taskId || typeof taskId !== 'string') { // NEW LINE
+        res.status(400).json({ error: 'Не указан ID задачи (taskId) в теле запроса.' }); // NEW LINE
+        return; // NEW LINE
+    } // NEW LINE
 
     try {
          // Verify user has access to the task (optional but recommended)
@@ -786,7 +791,7 @@ export const addTaskAttachment = async (req: Request, res: Response): Promise<vo
             file_type: newAttachment.file_type,
             // file_size: newAttachment.file_size, // Старое поле
             file_size_bytes: newAttachment.file_size, // Новое поле
-            // upload_date: new Date(newAttachment.created_at).toISOString(), // Старое поле
+            // uploaded_date: new Date(newAttachment.created_at).toISOString(), // Старое поле
             uploaded_at: new Date(newAttachment.created_at).toISOString(), // Новое поле
             // uploaded_by: newAttachment.uploader_id, // Старое поле
             uploaded_by_id: newAttachment.uploader_id, // Новое поле
@@ -902,6 +907,7 @@ export const getTaskAttachments = async (req: Request, res: Response): Promise<v
 export const downloadTaskAttachment = async (req: Request, res: Response): Promise<void> => {
      const userId = (req.user as AuthenticatedUser)?.id;
      const { attachmentId } = req.params; // Оставляем attachmentId из params
+     let associatedTaskIdForLogging: string | null = null; // Для логирования в catch
 
      console.log(`Запрос на скачивание вложения ID: ${attachmentId} пользователем ${userId}.`);
 
@@ -916,30 +922,68 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
     }
 
     try {
-        // 1. Проверяем существование задачи и права доступа (скачивать может создатель или исполнитель)
-         const taskResult = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [attachmentId]);
-        if (taskResult.rows.length === 0) {
-            res.status(404).json({ error: 'Задача не найдена.' });
-             console.log(`Попытка скачать вложение ${attachmentId} несуществующей задачи ${attachmentId} пользователем ${userId}`);
-            return;
-        }
-        // const task = taskResult.rows[0];
-        // if (task.creator_id !== userId && task.assignee_id !== userId) {
-        //      res.status(403).json({ error: 'У вас нет прав скачивать вложения этой задачи.' });
-        //      console.log(`Пользователь ${userId} пытался скачать вложение ${attachmentId} задачи ${taskId}, к которой не имеет отношения.`);
-        //     return;
-        // }
+        // 1. Получаем информацию о вложении, включая task_id
+        const attachmentResult = await pool.query(
+            `SELECT ta.file_path, ta.file_name, ta.task_id
+             FROM task_attachments ta
+             WHERE ta.id = $1`,
+            [attachmentId]
+        );
 
-        // 2. Получаем информацию о файле
-        const fileResult = await pool.query('SELECT file_path, file_name FROM task_attachments WHERE id = $1 AND task_id = $2', [attachmentId, attachmentId]);
-
-        if (fileResult.rows.length === 0) {
-            res.status(404).json({ error: 'Вложение не найдено для этой задачи.' });
-            console.log(`Вложение ID ${attachmentId} не найдено для задачи ${attachmentId}.`);
+        if (attachmentResult.rows.length === 0) {
+            res.status(404).json({ error: 'Вложение не найдено.' });
+            console.log(`Вложение ID ${attachmentId} не найдено.`);
             return;
         }
 
-        const { file_path, file_name } = fileResult.rows[0];
+        const { file_path, file_name, task_id: associatedTaskId } = attachmentResult.rows[0];
+        associatedTaskIdForLogging = associatedTaskId; // Присваиваем для использования в catch
+
+        // 2. Проверяем существование связанной задачи и права доступа пользователя
+        // (скачивать может создатель или исполнитель задачи, к которой относится вложение)
+        const taskAccessResult = await pool.query(
+            'SELECT creator_id, assignee_id FROM tasks WHERE id = $1',
+            [associatedTaskId]
+        );
+
+        if (taskAccessResult.rows.length === 0) {
+            res.status(404).json({ error: 'Связанная с вложением задача не найдена.' });
+            console.log(`Задача ID: ${associatedTaskId}, связанная с вложением ${attachmentId}, не найдена.`);
+            return;
+        }
+
+        const taskForAttachment = taskAccessResult.rows[0];
+        if (taskForAttachment.creator_id !== userId && taskForAttachment.assignee_id !== userId) {
+             res.status(403).json({ error: 'У вас нет прав скачивать вложения этой задачи.' });
+             console.log(`Пользователь ${userId} пытался скачать вложение ${attachmentId} задачи ${associatedTaskId}, к которой не имеет отношения.`);
+            return;
+        }
+
+        // Старая логика проверки задачи по attachmentId была некорректной
+        // // 1. Проверяем существование задачи и права доступа (скачивать может создатель или исполнитель)
+        //  const taskResult = await pool.query('SELECT creator_id, assignee_id FROM tasks WHERE id = $1', [attachmentId]); // OLD LOGIC
+        // if (taskResult.rows.length === 0) { // OLD LOGIC
+        //     res.status(404).json({ error: 'Задача не найдена.' }); // OLD LOGIC
+        //      console.log(`Попытка скачать вложение ${attachmentId} несуществующей задачи ${attachmentId} пользователем ${userId}`); // OLD LOGIC
+        //     return; // OLD LOGIC
+        // } // OLD LOGIC
+        // // const task = taskResult.rows[0]; // OLD LOGIC
+        // // if (task.creator_id !== userId && task.assignee_id !== userId) { // OLD LOGIC
+        // //      res.status(403).json({ error: 'У вас нет прав скачивать вложения этой задачи.' }); // OLD LOGIC
+        // //      console.log(`Пользователь ${userId} пытался скачать вложение ${attachmentId} задачи ${taskId}, к которой не имеет отношения.`); // OLD LOGIC
+        // //     return; // OLD LOGIC
+        // // } // OLD LOGIC
+
+        // // 2. Получаем информацию о файле // OLD LOGIC
+        // const fileResult = await pool.query('SELECT file_path, file_name FROM task_attachments WHERE id = $1 AND task_id = $2', [attachmentId, attachmentId]); // OLD LOGIC - некорректное использование attachmentId для task_id
+
+        // if (fileResult.rows.length === 0) { // OLD LOGIC
+        //     res.status(404).json({ error: 'Вложение не найдено для этой задачи.' }); // OLD LOGIC
+        //     console.log(`Вложение ID ${attachmentId} не найдено для задачи ${attachmentId}.`); // OLD LOGIC
+        //     return; // OLD LOGIC
+        // } // OLD LOGIC
+
+        // const { file_path, file_name } = fileResult.rows[0]; // OLD LOGIC
         const absolutePath = path.resolve(file_path); // Убеждаемся, что путь абсолютный
 
          // Проверяем, существует ли файл на диске
@@ -963,7 +1007,7 @@ export const downloadTaskAttachment = async (req: Request, res: Response): Promi
         });
 
     } catch (error: any) {
-        console.error(`Ошибка при скачивании вложения ${attachmentId} задачи ${attachmentId}:`, error);
+        console.error(`Ошибка при скачивании вложения ${attachmentId} (возможная связанная задача ID: ${associatedTaskIdForLogging ?? 'не определена'}):`, error);
         if (error.code === '22P02') { // Invalid UUID format
             res.status(400).json({ error: 'Неверный формат ID задачи или вложения.' });
         } else {
