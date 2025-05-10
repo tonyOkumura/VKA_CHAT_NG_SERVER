@@ -27,7 +27,13 @@ export const getAllUsers = async (req: Request, res: Response): Promise<any> => 
     console.log(`Fetching all users.`);
 
     try {
-        // Выбираем поля пользователя и добавляем avatarUrl через LEFT JOIN
+        const user_id = req.user?.id;
+        if (!user_id) {
+            console.error('No user ID found in request.');
+            return res.status(401).json({ error: 'Unauthorized: User ID not found' });
+        }
+
+        // Выбираем поля пользователя и добавляем avatarUrl через LEFT JOIN, исключая текущего пользователя
         const result = await pool.query(
             `SELECT 
                 u.id as user_id, 
@@ -39,14 +45,16 @@ export const getAllUsers = async (req: Request, res: Response): Promise<any> => 
                 ua.file_path AS "avatarPath" -- Get the relative path
              FROM users u
              LEFT JOIN user_avatars ua ON u.id = ua.user_id
-             ORDER BY u.username ASC`
+             WHERE u.id != $1
+             ORDER BY u.username ASC`,
+            [user_id]
         );
 
-        console.log(`All users fetched successfully.`);
+        console.log(`All users fetched successfully, excluding user ID: ${user_id}.`);
         // Return the rows directly, avatarPath is already selected
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching all users:', error);
         res.status(500).json({ error: 'Failed to fetch users' });
     }
-}; 
+};
