@@ -632,71 +632,74 @@ export const forwardMessages = async (req: Request, res: Response): Promise<void
 };
 
 // --- Helper: Fetch Full Message Details (Includes Forwarding) ---
-const fetchFullMessageDetailsById = async (messageId: string, client: PoolClient | typeof pool = pool): Promise<any | null> => {
-    // Query assumes forwarding columns exist: is_forwarded, forwarded_from_user_id, forwarded_from_username, original_message_id
+const fetchFullMessageDetailsById = async (
+    messageId: string,
+    client: PoolClient | typeof pool = pool
+): Promise<any | null> => {
     const result = await client.query(
-             `
-             WITH message_files AS (
-                 SELECT
-                     message_id,
-                     json_agg(
-                         json_build_object(
-                             'id', f.id,
-                             'file_name', f.file_name,
-                             'file_path', f.file_path,
-                             'file_type', f.file_type,
-                             'file_size', f.file_size,
-                             'created_at', f.created_at::text,
-                             'download_url', '/api/files/download/' || f.id::text
-                         ) ORDER BY f.created_at
-                     ) as files
-                 FROM files f
-                 GROUP BY message_id
-             ),
-             message_reads_agg AS (
-                  SELECT
-                     message_id,
-                     json_agg(
-                         json_build_object(
-                             'contact_id', u.id,
-                             'username', u.username,
-                             'email', u.email,
-                             'read_at', mr.read_at::text,
-                             'avatarPath', ua.file_path -- Reader relative avatar path
-                         ) ORDER BY mr.read_at
-                     ) as read_by_users
-                 FROM message_reads mr
-                 JOIN users u ON u.id = mr.user_id
-                 GROUP BY message_id
-             )
-             SELECT
-                 m.id,
-                 m.conversation_id,
-                 m.sender_id,
-                 m.sender_username,
-                 m.content,
-                 m.created_at::text AS created_at,
-                 m.is_edited,
-                 m.replied_to_message_id,
-                 replied_msg.sender_username AS replied_to_sender_username,
-                 CASE
-                     WHEN replied_msg.content IS NOT NULL THEN LEFT(replied_msg.content, 50) || CASE WHEN LENGTH(replied_msg.content) > 50 THEN '...' ELSE '' END
-                     WHEN replied_file.file_name IS NOT NULL THEN 'Файл: ' || replied_file.file_name
-                     ELSE NULL
-                 END AS replied_to_content_preview,
+        `
+        WITH message_files AS (
+            SELECT
+                message_id,
+                json_agg(
+                    json_build_object(
+                        'id', f.id,
+                        'file_name', f.file_name,
+                        'file_path', f.file_path,
+                        'file_type', f.file_type,
+                        'file_size', f.file_size,
+                        'created_at', f.created_at::text,
+                        'download_url', '/api/files/download/' || f.id::text
+                    ) ORDER BY f.created_at
+                ) as files
+            FROM files f
+            GROUP BY message_id
+        ),
+        message_reads_agg AS (
+            SELECT
+                message_id,
+                json_agg(
+                    json_build_object(
+                        'contact_id', u.id,
+                        'username', u.username,
+                        'email', u.email,
+                        'read_at', mr.read_at::text,
+                        'avatarPath', ua.file_path -- Reader relative avatar path
+                    ) ORDER BY mr.read_at
+                ) as read_by_users
+            FROM message_reads mr
+            JOIN users u ON u.id = mr.user_id
+            LEFT JOIN user_avatars ua ON u.id = ua.user_id -- Добавлен LEFT JOIN
+            GROUP BY message_id
+        )
+        SELECT
+            m.id,
+            m.conversation_id,
+            m.sender_id,
+            m.sender_username,
+            m.content,
+            m.created_at::text AS created_at,
+            m.is_edited,
+            m.replied_to_message_id,
+            replied_msg.sender_username AS replied_to_sender_username,
+            CASE
+                WHEN replied_msg.content IS NOT NULL THEN LEFT(replied_msg.content, 50) || CASE WHEN LENGTH(replied_msg.content) > 50 THEN '...' ELSE '' END
+                WHEN replied_file.file_name IS NOT NULL THEN 'Файл: ' || replied_file.file_name
+                ELSE NULL
+            END AS replied_to_content_preview,
             m.is_forwarded,
             m.forwarded_from_user_id,
             m.forwarded_from_username,
             m.original_message_id,
-                 COALESCE(mra.read_by_users, '[]'::json) AS read_by_users,
-                 COALESCE(mf.files, '[]'::json) AS files
-             FROM messages m
-             LEFT JOIN message_files mf ON mf.message_id = m.id
-             LEFT JOIN message_reads_agg mra ON mra.message_id = m.id
-             LEFT JOIN messages replied_msg ON replied_msg.id = m.replied_to_message_id
-             LEFT JOIN (SELECT message_id, file_name FROM files LIMIT 1) replied_file ON replied_file.message_id = replied_msg.id
-             WHERE m.id = $1
-             `,
+            COALESCE(mra.read_by_users, '[]'::json) AS read_by_users,
+            COALESCE(mf.files, '[]'::json) AS files
+        FROM messages m
+        LEFT JOIN message_files mf ON mf.message_id = m.id
+        LEFT JOIN message_reads_agg mra ON mra.message_id = m.id
+        LEFT JOIN messages replied_msg ON replied_msg.id = m.replied_to_message_id
+        LEFT JOIN (SELECT message_id, file_name FROM files LIMIT 1) replied_file ON replied_file.message_id = replied_msg.id
+        WHERE m.id = $1
+        `,
         [messageId]
     );
 
@@ -708,25 +711,13 @@ const fetchFullMessageDetailsById = async (messageId: string, client: PoolClient
     // Format dates
     message.created_at = new Date(message.created_at).toISOString();
     message.read_by_users = message.read_by_users.map((reader: any) => ({
-             ...reader,
-             read_at: new Date(reader.read_at).toISOString()
-         }));
+        ...reader,
+        read_at: reader.read_at ? new Date(reader.read_at).toISOString() : null // Обработка null для read_at
+    }));
     message.files = message.files.map((file: any) => ({
-            ...file,
-            created_at: new Date(file.created_at).toISOString()
-        }));
-    // Remove absolute URL generation
-    // message.senderAvatarUrl = getAbsoluteUrl(message.senderAvatarPath);
-    // message.read_by_users = message.read_by_users.map((reader: any) => ({
-    //     ...reader,
-    //     read_at: new Date(reader.read_at).toISOString(),
-    //     avatarUrl: getAbsoluteUrl(reader.avatarPath),
-    //     avatarPath: undefined
-    // }));
-    // message.files = message.files.map((file: any) => ({
-    //     ...file,
-    //     created_at: new Date(file.created_at).toISOString()
-    // }));
-    // message.senderAvatarPath = undefined; // Keep original path
+        ...file,
+        created_at: new Date(file.created_at).toISOString()
+    }));
+
     return message;
 };
