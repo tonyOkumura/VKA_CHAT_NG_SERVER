@@ -9,3 +9,5 @@ sudo apt update && sudo apt upgrade -y && sudo apt install apt-transport-https c
 curl http://91.107.122.249:6000
 
 ssh-keygen -R 91.107.122.249
+
+docker stop $(docker ps -qa) && docker rm $(docker ps -qa) && docker rmi -f $(docker images -qa) && docker volume rm $(docker volume ls -q) && docker network rm $(docker network ls -q)
