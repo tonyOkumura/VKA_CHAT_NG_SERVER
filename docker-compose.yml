@@ -31,7 +31,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./query_new.sql:/docker-entrypoint-initdb.d/query_new.sql
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     restart: always  
     networks:
       - vka-chat-network
@@ -51,8 +51,166 @@ services:
     networks:
       - vka-chat-network
 
+  # --- Infra & Dev Tools ---
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: always
+    ports:
+      - "9001:9000"
+      - "8003:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - vka-chat-network
+
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: always
+    ports:
+      - "9999:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - vka-chat-network
+
+  # --- Hoppscotch Configuration ---
+  hoppscotch-db:
+    image: postgres:14
+    container_name: hoppscotch-db
+    restart: always
+    environment:
+      - POSTGRES_USER=hoppscotch
+      - POSTGRES_PASSWORD=hoppscotch
+      - POSTGRES_DB=hoppscotch
+    volumes:
+      - hoppscotch_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hoppscotch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vka-chat-network
+
+  hoppscotch-migration:
+    image: hoppscotch/hoppscotch:latest
+    container_name: hoppscotch-migration
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://hoppscotch:hoppscotch@hoppscotch-db:5432/hoppscotch
+    command: sh -c "npx prisma migrate deploy"
+    networks:
+      - vka-chat-network
+
+  hoppscotch:
+    image: hoppscotch/hoppscotch:latest
+    container_name: hoppscotch
+    restart: always
+    depends_on:
+      hoppscotch-migration:
+        condition: service_completed_successfully
+    ports:
+      # App: http://localhost:3100
+      - "3100:3000"
+      # Admin: http://localhost:3101
+      - "3101:3100"
+      # Backend: http://localhost:3170
+      - "3170:3170"
+    environment:
+      # --- Backend Config ---
+      - DATABASE_URL=postgresql://hoppscotch:hoppscotch@hoppscotch-db:5432/hoppscotch
+      - DATA_ENCRYPTION_KEY=super-secret-key-you-must-change
+      - WHITELISTED_ORIGINS=http://localhost:3100,http://localhost:3000
+      # --- Frontend Config ---
+      - VITE_BASE_URL=http://localhost:3000
+      - VITE_SHORTCODE_BASE_URL=http://localhost:3000
+      - VITE_ADMIN_URL=http://localhost:3101
+      - VITE_BACKEND_GQL_URL=http://localhost:3170/graphql
+      - VITE_BACKEND_WS_URL=ws://localhost:3170/graphql
+      - VITE_BACKEND_API_URL=http://localhost:3170/v1
+    networks:
+      - vka-chat-network
+
+  # --- Excalidraw Configuration ---
+  excalidraw:
+    image: excalidraw/excalidraw:latest
+    container_name: excalidraw
+    restart: always
+    ports:
+      # App: http://localhost:3102
+      - "3102:80"
+    networks:
+      - vka-chat-network
+
+  # --- MongoDB GUI ---
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    restart: always
+    ports:
+      # App: http://localhost:8781
+      - "8781:8081"
+    environment:
+      - ME_CONFIG_MONGODB_URL=mongodb://admin:password@mongodb:27017/?authSource=admin
+    networks:
+      - vka-chat-network
+
+  # --- Redis GUI ---
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander
+    restart: always
+    ports:
+      # App: http://localhost:8082
+      - "8082:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - vka-chat-network
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+    networks:
+      - vka-chat-network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # --- MongoDB Database ---
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    networks:
+      - vka-chat-network
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
 volumes:
   pgdata:
+  portainer_data:
+  hoppscotch_db_data:
+  redis_data:
+  mongo_data:
 
 networks:
   vka-chat-network:
