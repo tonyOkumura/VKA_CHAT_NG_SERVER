@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import cors from 'cors';
 import { json } from 'body-parser';
 import authRoutes from './routes/authRoutes';
 import conversationsRoutes from './routes/conversationsRoutes';
@@ -38,6 +39,13 @@ if (!fs.existsSync(groupAvatarUploadsDir)) {
 }
 
 const app = express();
+// Enable CORS for browser clients
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.options('*', cors());
 const server = http.createServer(app);
 app.use(json());
 // Убираем export, инициализируем io как локальную переменную
