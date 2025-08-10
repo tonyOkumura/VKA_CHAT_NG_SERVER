@@ -3,20 +3,9 @@ import pool from '../models/db';
 import { PoolClient } from 'pg'; // Импортируем PoolClient для транзакций
 import path from 'path'; // Добавляем импорт path
 import fs from 'fs'; // Добавляем импорт fs
-// import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
 
-// Remove SERVER_BASE_URL and getAbsoluteUrl
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
 
-// Function to construct absolute URL from relative path - REMOVED
-// const getAbsoluteUrl = (relativePath: string | null): string | null => {
-//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
-// };
-
-// Интерфейс для пользователя из req.user (допустим, он есть)
 interface AuthenticatedUser {
     id: string;
     username: string;

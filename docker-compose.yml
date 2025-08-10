@@ -7,10 +7,10 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "6000:6000"
+      - "6060:6060"
     environment:
       - HOST=0.0.0.0  
-      - PORT=6000
+      - PORT=6060
       - NODE_ENV=production
       - DATABASE_URL=postgresql://postgres:241111@db:5432/vka_chat  
     depends_on:

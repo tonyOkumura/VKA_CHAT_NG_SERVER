@@ -1,10 +1,6 @@
 import { Request, Response } from 'express';
 import pool from '../models/db';
 
-// Remove SERVER_BASE_URL and getAbsoluteUrl
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
 
 export const updateUserOnlineStatus = async (userId: string, isOnline: boolean): Promise<void> => {
     try {

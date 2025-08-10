@@ -3,17 +3,7 @@ import { PoolClient } from 'pg'; // Import PoolClient for transaction
 import pool from '../models/db';
 import * as socketService from '../services/socketService'; // Импортируем socketService
 
-// Remove SERVER_BASE_URL and getAbsoluteUrl
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
 
-// Function to construct absolute URL from relative path - REMOVED
-// const getAbsoluteUrl = (relativePath: string | null): string | null => {
-//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
-// };
-
-// Тип для данных из req.user (предполагая, что middleware добавляет пользователя)
 interface AuthenticatedUser {
     id: string;
     username: string; // Assume middleware provides username

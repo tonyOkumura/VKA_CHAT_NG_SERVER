@@ -5,16 +5,6 @@ import * as socketService from '../services/socketService';
 import path from 'path';
 import fs from 'fs';
 
-// Remove SERVER_BASE_URL and getAbsoluteUrl
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
-
-// Function to construct absolute URL from relative path - REMOVED
-// const getAbsoluteUrl = (relativePath: string | null): string | null => {
-//     return relativePath ? `${SERVER_BASE_URL}${relativePath}` : null;
-// };
-
 // Тип для данных из req.user
 interface AuthenticatedUser {
     id: string;

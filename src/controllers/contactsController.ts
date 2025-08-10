@@ -3,11 +3,6 @@ import pool from '../models/db';
 // import { io } from '../index'; // Убираем прямой импорт io
 import * as socketService from '../services/socketService'; // Импортируем сервис
 
-// Remove SERVER_BASE_URL
-// const HOST = process.env.HOST || 'localhost';
-// const PORT = process.env.PORT || 6000;
-// const SERVER_BASE_URL = `http://${HOST}:${PORT}`;
-
 export const fetchContacts = async (req: Request, res: Response): Promise<any> => {
     let userId = null;
     if (req.user) {

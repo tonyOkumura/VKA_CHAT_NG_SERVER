@@ -39,13 +39,11 @@ if (!fs.existsSync(groupAvatarUploadsDir)) {
 }
 
 const app = express();
-// Enable CORS for browser clients
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-app.options('*', cors());
+// Handle preflight early, including Private Network Access
+
+
+// Enable CORS for actual requests with credentials support
+app.use(cors());
 const server = http.createServer(app);
 app.use(json());
 // Убираем export, инициализируем io как локальную переменную
@@ -414,7 +412,7 @@ io.on('connection', async (socket: Socket) => {
 });
 
 const HOST = process.env.HOST || '0.0.0.0';
-const PORT = Number(process.env.PORT) || 6000;
+const PORT = Number(process.env.PORT) || 6060;
 
 server.listen(PORT, HOST, () => {
     console.log(`Server is running on http://${HOST}:${PORT}`);
